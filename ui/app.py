@@ -3,17 +3,15 @@
 Run with: ``streamlit run ui/app.py``.
 
 Three tabs:
-- "Znanje": browse the 122 playbooks in a category tree, preview content.
-- "Chat":   ask a free-form question, retrieve top-k playbooks, cite them.
-- "Agent":  pick one of the 50 sample tickets, classify → retrieve → draft,
-            then approve / edit / reject — every decision is logged to
-            ``feedback.sqlite3``.
-
-Heavy work (loading the embedding model, building the index, reading the
-ticket sample) is cached so re-runs are fast.
+- "Znanje": browse the 122 playbooks, filtered from the sidebar, rendered as cards.
+- "Chat":   ask a free-form question, retrieve top-k playbooks with colored
+            confidence bars.
+- "Agent":  pick one of the sample tickets, classify → retrieve → draft in a
+            two-column layout (ticket | draft + decision).
 """
 from __future__ import annotations
 
+import html
 import json
 import sys
 from pathlib import Path
@@ -42,7 +40,22 @@ from core.retrieval import (
 )
 
 
-st.set_page_config(page_title="Signal Pilot", layout="wide")
+st.set_page_config(
+    page_title="Signal Pilot",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+# ---------------------------------------------------------------------------
+# Theme — inject custom CSS once per session.
+# ---------------------------------------------------------------------------
+_STYLES_PATH = Path(__file__).with_name("styles.css")
+
+
+def _inject_theme() -> None:
+    css = _STYLES_PATH.read_text(encoding="utf-8")
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +81,7 @@ def _load_tickets() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Rendering helpers
 # ---------------------------------------------------------------------------
 def _ticket_text(ticket: dict[str, Any]) -> str:
     summary = ticket.get("summary", "") or ""
@@ -77,7 +90,6 @@ def _ticket_text(ticket: dict[str, Any]) -> str:
 
 
 def _category_tree(playbooks: list[Playbook]) -> dict[str, dict[str, list[Playbook]]]:
-    """Group playbooks by ticket_class → issue_category → [playbooks]."""
     tree: dict[str, dict[str, list[Playbook]]] = {}
     for pb in playbooks:
         cls = pb.ticket_class or "uncategorized"
@@ -89,40 +101,117 @@ def _category_tree(playbooks: list[Playbook]) -> dict[str, dict[str, list[Playbo
     return tree
 
 
+def _confidence_tier(score: float) -> str:
+    if score >= 0.7:
+        return "high"
+    if score >= 0.4:
+        return "mid"
+    return "low"
+
+
+def confidence_bar(score: float) -> str:
+    """HTML for a colored progress-bar style confidence indicator."""
+    pct = max(0.0, min(1.0, float(score))) * 100
+    tier = _confidence_tier(score)
+    return (
+        '<div class="sp-conf-wrap">'
+        '<div class="sp-conf-track">'
+        f'<div class="sp-conf-fill {tier}" style="width:{pct:.0f}%"></div>'
+        '</div>'
+        f'<div class="sp-conf-label">{score:.2f}</div>'
+        '</div>'
+    )
+
+
+def _chips(labels: list[str]) -> str:
+    return "".join(f'<span class="sp-chip">{html.escape(str(l))}</span>' for l in labels if l)
+
+
+def _classification_pill(label: str) -> str:
+    mapping = {
+        "support_request": ("sp-pill-support", "support request"),
+        "internal_log":    ("sp-pill-internal", "internal log"),
+        "spam_or_junk":    ("sp-pill-spam", "spam / junk"),
+    }
+    cls, text = mapping.get(label, ("sp-pill-support", label))
+    return f'<span class="sp-pill {cls}">{html.escape(text)}</span>'
+
+
+def _action_pill(action: str) -> str:
+    return f'<span class="sp-pill sp-pill-action">{html.escape(action.replace("_", " "))}</span>'
+
+
+def render_playbook_card(pb: Playbook, *, score: float | None = None, expanded: bool = False) -> None:
+    """A single playbook rendered as a card. Optionally shows a confidence bar."""
+    meta_chips = [
+        pb.ticket_class,
+        pb.issue_category,
+        *pb.country_focus,
+        *pb.languages,
+    ]
+    header_html = (
+        '<div class="sp-card">'
+        f'<div class="sp-card-title">{html.escape(pb.title)}</div>'
+        f'<div class="sp-card-meta"><code>{html.escape(pb.id)}</code>{_chips([c for c in meta_chips if c])}</div>'
+    )
+    if score is not None:
+        header_html += confidence_bar(score)
+    header_html += (
+        f'<div class="sp-card-body">{html.escape(pb.description)}</div>'
+        '</div>'
+    )
+    st.markdown(header_html, unsafe_allow_html=True)
+    with st.expander("Show full playbook", expanded=expanded):
+        st.markdown(pb.body)
+
+
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
 def render_knowledge_tab(index: PlaybookIndex) -> None:
-    st.subheader(f"Knowledge base — {len(index)} playbooks")
     tree = _category_tree(index.playbooks)
+    ticket_classes = sorted(tree.keys())
 
-    col_tree, col_view = st.columns([1, 2])
-
-    with col_tree:
-        ticket_classes = sorted(tree.keys())
-        chosen_class = st.selectbox("Ticket class", ticket_classes)
+    with st.sidebar:
+        st.markdown("#### Filters")
+        chosen_class = st.selectbox("Ticket class", ticket_classes, key="kn_class")
         categories = sorted(tree[chosen_class].keys())
-        chosen_cat = st.selectbox("Category", categories)
-        playbooks = tree[chosen_class][chosen_cat]
-        labels = [pb.title for pb in playbooks]
-        idx = st.radio("Playbook", range(len(playbooks)), format_func=lambda i: labels[i])
+        chosen_cat = st.selectbox("Category", ["All"] + categories, key="kn_cat")
+        query = st.text_input("Search title / description", "", key="kn_search").strip().lower()
 
-    with col_view:
-        if playbooks:
-            pb = playbooks[idx]
-            st.markdown(f"### {pb.title}")
-            st.caption(
-                f"`{pb.id}` · class=`{pb.ticket_class}` · "
-                f"countries={', '.join(pb.country_focus) or '—'} · "
-                f"languages={', '.join(pb.languages) or '—'}"
-            )
-            st.markdown(pb.body)
+    if chosen_cat == "All":
+        playbooks = [pb for cat in categories for pb in tree[chosen_class][cat]]
+    else:
+        playbooks = tree[chosen_class][chosen_cat]
+
+    if query:
+        playbooks = [
+            pb for pb in playbooks
+            if query in pb.title.lower() or query in pb.description.lower()
+        ]
+
+    st.markdown(f"### Knowledge base")
+    st.caption(f"{len(playbooks)} of {len(index)} playbooks shown")
+
+    if not playbooks:
+        st.info("No playbooks match the current filter.")
+        return
+
+    for pb in playbooks:
+        render_playbook_card(pb)
 
 
 def render_chat_tab(index: PlaybookIndex) -> None:
-    st.subheader("Ask the knowledge base")
-    question = st.text_area("Your question", height=120, placeholder="e.g. What do I tell a Croatian customer who got a parking fine despite paying via the app?")
-    top_k = st.slider("How many playbooks to cite", 1, 5, config.TOP_K_RETRIEVAL)
+    with st.sidebar:
+        st.markdown("#### Search options")
+        top_k = st.slider("How many playbooks to cite", 1, 5, config.TOP_K_RETRIEVAL, key="chat_topk")
+
+    st.markdown("### Ask the knowledge base")
+    question = st.text_area(
+        "Your question",
+        height=120,
+        placeholder="e.g. What do I tell a Croatian customer who got a parking fine despite paying via the app?",
+    )
 
     if not st.button("Search", type="primary"):
         return
@@ -144,58 +233,144 @@ def render_chat_tab(index: PlaybookIndex) -> None:
         return
 
     for hit in hits:
-        with st.expander(f"#{hit.rank + 1}  ·  {hit.playbook.title}  ·  score {hit.score:.3f}"):
-            st.caption(f"`{hit.playbook.id}` · {hit.playbook.category}")
-            st.markdown(hit.playbook.description)
-            st.divider()
-            st.markdown(hit.playbook.body)
+        render_playbook_card(hit.playbook, score=hit.score)
 
 
-def _render_classification(ticket: dict[str, Any]) -> None:
-    with st.spinner("Classifying ticket…"):
-        try:
-            result = classify_ticket(
-                summary=ticket.get("summary", ""),
-                description=ticket.get("description", ""),
-                reporter_email=ticket.get("reporter_email"),
-                labels=ticket.get("labels") or [],
-            )
-        except Exception as exc:
-            st.error(f"Classifier failed: {exc}")
-            return
-    st.session_state["last_classification"] = result
+# ---------- Agent tab (two-column layout) ----------------------------------
+def _agent_sidebar(tickets: list[dict[str, Any]]) -> dict[str, Any]:
+    with st.sidebar:
+        st.markdown("#### Ticket")
+        options = [
+            f"{t.get('key', '?')}  ·  {(t.get('summary') or '').strip()[:60]}"
+            for t in tickets
+        ]
+        chosen = st.selectbox(
+            "Pick a ticket",
+            range(len(tickets)),
+            format_func=lambda i: options[i],
+            key="agent_ticket_idx",
+        )
+    return tickets[chosen]
+
+
+def _agent_left_column(ticket: dict[str, Any], index: PlaybookIndex) -> None:
+    st.markdown("#### Ticket")
+    summary = html.escape(ticket.get("summary") or "")
+    description = html.escape(ticket.get("description") or "")
+    meta = _chips([
+        ticket.get("status") or "",
+        ticket.get("priority") or "",
+        *(ticket.get("labels") or []),
+    ])
+    reporter = html.escape(ticket.get("reporter_email") or "unknown")
     st.markdown(
-        f"**Classification:** `{result.label}`  ·  confidence {result.confidence:.2f}\n\n"
-        f"_{result.reason}_"
+        '<div class="sp-card">'
+        f'<div class="sp-card-title">{summary}</div>'
+        f'<div class="sp-card-meta"><code>{html.escape(ticket.get("key") or "?")}</code>{meta}'
+        f'<span class="sp-chip">reporter: {reporter}</span></div>'
+        f'<div class="sp-card-body">{description.replace(chr(10), "<br>")}</div>'
+        '</div>',
+        unsafe_allow_html=True,
     )
 
+    st.markdown("#### 1 · Classify")
+    if st.button("Run classifier", key="btn_classify"):
+        with st.spinner("Classifying…"):
+            try:
+                result = classify_ticket(
+                    summary=ticket.get("summary", ""),
+                    description=ticket.get("description", ""),
+                    reporter_email=ticket.get("reporter_email"),
+                    labels=ticket.get("labels") or [],
+                )
+                st.session_state["last_classification"] = result
+            except Exception as exc:
+                st.error(f"Classifier failed: {exc}")
+                return
 
-def _render_retrieval(index: PlaybookIndex, ticket: dict[str, Any]) -> None:
-    hits = retrieve(
-        index,
-        _ticket_text(ticket),
-        labels=ticket.get("labels") or [],
-        ticket_class=None,
+    cls = st.session_state.get("last_classification")
+    if cls:
+        st.markdown(
+            f'{_classification_pill(cls.label)} '
+            f'<span class="sp-conf-label">conf {cls.confidence:.2f}</span>',
+            unsafe_allow_html=True,
+        )
+        st.caption(cls.reason)
+        if cls.label != "support_request":
+            st.info(
+                f"Auto-close path: this ticket was classified as `{cls.label}`. "
+                "No retrieval or drafting needed."
+            )
+            return
+
+    if not cls:
+        return
+
+    st.markdown("#### 2 · Retrieve")
+    detected_lang = detect_language(_ticket_text(ticket))
+    detected_country = country_from_labels(ticket.get("labels") or [])
+    st.caption(
+        f"Detected language: `{detected_lang or '—'}`  ·  country: `{detected_country or '—'}`"
     )
-    st.session_state["last_hits"] = hits
+
+    if "last_hits" not in st.session_state or st.session_state.get("hits_for") != ticket.get("key"):
+        with st.spinner("Retrieving playbooks…"):
+            hits = retrieve(
+                index,
+                _ticket_text(ticket),
+                labels=ticket.get("labels") or [],
+                ticket_class=None,
+            )
+            st.session_state["last_hits"] = hits
+            st.session_state["hits_for"] = ticket.get("key")
+            st.session_state["chosen_hit_idx"] = 0
+
+    hits = st.session_state.get("last_hits", [])
     if not hits:
         st.info("No playbook matched.")
         return
-    options = [f"#{h.rank + 1}  ·  {h.playbook.title}  ·  score {h.score:.3f}" for h in hits]
-    chosen = st.radio("Matched playbooks", range(len(hits)), format_func=lambda i: options[i])
-    st.session_state["chosen_hit_idx"] = chosen
-    with st.expander("Show selected playbook"):
-        st.markdown(hits[chosen].playbook.body)
+
+    for h in hits:
+        st.markdown(
+            f'<div class="sp-card">'
+            f'<div class="sp-card-title">#{h.rank + 1}  ·  {html.escape(h.playbook.title)}</div>'
+            f'<div class="sp-card-meta"><code>{html.escape(h.playbook.id)}</code>'
+            f'{_chips([c for c in [h.playbook.ticket_class, *h.playbook.country_focus] if c])}</div>'
+            f'{confidence_bar(h.score)}'
+            f'<div class="sp-card-body">{html.escape(h.playbook.description)}</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    options = [f"#{h.rank + 1}  ·  {h.playbook.title}" for h in hits]
+    st.radio(
+        "Use which playbook for drafting?",
+        range(len(hits)),
+        format_func=lambda i: options[i],
+        key="chosen_hit_idx",
+    )
 
 
-def _render_draft_and_feedback(ticket: dict[str, Any]) -> None:
+def _agent_right_column(ticket: dict[str, Any]) -> None:
+    st.markdown("#### 3 · Draft & decide")
+
     hits = st.session_state.get("last_hits", [])
-    chosen_idx = st.session_state.get("chosen_hit_idx", 0)
-    if not hits:
+    cls = st.session_state.get("last_classification")
+    if not cls:
+        st.caption("Run the classifier on the left to get started.")
         return
-    chosen_hit = hits[chosen_idx]
+    if cls.label != "support_request":
+        st.caption("Ticket is on the auto-close path — no drafting needed.")
+        return
+    if not hits:
+        st.caption("No matched playbooks yet.")
+        return
 
-    if st.button("Generate draft", type="primary"):
+    chosen_idx = st.session_state.get("chosen_hit_idx", 0)
+    chosen_hit = hits[chosen_idx]
+    st.caption(f"Drafting against: **{chosen_hit.playbook.title}**")
+
+    if st.button("Generate draft", type="primary", key="btn_draft"):
         with st.spinner("Drafting reply…"):
             try:
                 draft = draft_reply(
@@ -203,23 +378,26 @@ def _render_draft_and_feedback(ticket: dict[str, Any]) -> None:
                     ticket_description=ticket.get("description", ""),
                     playbook=chosen_hit.playbook,
                 )
+                st.session_state["last_draft"] = draft
+                st.session_state["draft_for"] = (ticket.get("key"), chosen_hit.playbook.id)
             except Exception as exc:
                 st.error(f"Drafter failed: {exc}")
                 return
-        st.session_state["last_draft"] = draft
 
     draft = st.session_state.get("last_draft")
-    if not draft:
+    if not draft or st.session_state.get("draft_for") != (ticket.get("key"), chosen_hit.playbook.id):
         return
 
     st.markdown(
-        f"**Recommended action:** `{draft.recommended_action}`  ·  _{draft.rationale}_"
+        f'{_action_pill(draft.recommended_action)} '
+        f'<span class="sp-conf-label">{html.escape(draft.rationale)}</span>',
+        unsafe_allow_html=True,
     )
-    edited = st.text_area("Draft (edit before sending if needed)", value=draft.draft, height=260)
+    edited = st.text_area("Reply (edit before sending if needed)", value=draft.draft, height=320, key="draft_text")
 
     col_a, col_e, col_r = st.columns(3)
     with col_a:
-        if st.button("Approve", use_container_width=True):
+        if st.button("Approve", use_container_width=True, key="btn_approve", type="primary"):
             feedback.record_feedback(
                 ticket_id=str(ticket.get("key", "?")),
                 playbook_id=chosen_hit.playbook.id,
@@ -229,7 +407,7 @@ def _render_draft_and_feedback(ticket: dict[str, Any]) -> None:
             )
             st.success("Feedback logged.")
     with col_e:
-        if st.button("Save edit", use_container_width=True):
+        if st.button("Save edit", use_container_width=True, key="btn_edit"):
             feedback.record_feedback(
                 ticket_id=str(ticket.get("key", "?")),
                 playbook_id=chosen_hit.playbook.id,
@@ -239,7 +417,7 @@ def _render_draft_and_feedback(ticket: dict[str, Any]) -> None:
             )
             st.success("Edit logged.")
     with col_r:
-        if st.button("Reject", use_container_width=True):
+        if st.button("Reject", use_container_width=True, key="btn_reject"):
             feedback.record_feedback(
                 ticket_id=str(ticket.get("key", "?")),
                 playbook_id=chosen_hit.playbook.id,
@@ -250,7 +428,6 @@ def _render_draft_and_feedback(ticket: dict[str, Any]) -> None:
 
 
 def render_agent_tab(index: PlaybookIndex) -> None:
-    st.subheader("Agent Feed")
     tickets = _load_tickets()
     if not tickets:
         st.warning(
@@ -259,61 +436,28 @@ def render_agent_tab(index: PlaybookIndex) -> None:
         )
         return
 
-    options = [f"{t.get('key', '?')}  ·  {(t.get('summary') or '').strip()[:80]}" for t in tickets]
-    chosen = st.selectbox("Pick a ticket", range(len(tickets)), format_func=lambda i: options[i])
-    ticket = tickets[chosen]
+    ticket = _agent_sidebar(tickets)
 
-    # Clear per-ticket state when the selection changes.
+    # Reset per-ticket state when the selection changes.
     if st.session_state.get("agent_ticket_key") != ticket.get("key"):
-        for k in ("last_classification", "last_hits", "last_draft", "chosen_hit_idx"):
+        for k in ("last_classification", "last_hits", "last_draft", "chosen_hit_idx", "hits_for", "draft_for"):
             st.session_state.pop(k, None)
         st.session_state["agent_ticket_key"] = ticket.get("key")
 
-    with st.expander("Ticket content", expanded=True):
-        st.caption(
-            f"`{ticket.get('key', '?')}` · status={ticket.get('status')} · "
-            f"labels={ticket.get('labels') or []} · "
-            f"reporter={ticket.get('reporter_email') or 'unknown'}"
-        )
-        st.markdown(f"**{ticket.get('summary', '')}**")
-        st.write(ticket.get("description", ""))
-
-    st.divider()
-    st.markdown("### 1 · Classify")
-    if st.button("Run classifier"):
-        _render_classification(ticket)
-    elif "last_classification" in st.session_state:
-        r = st.session_state["last_classification"]
-        st.markdown(
-            f"**Classification:** `{r.label}`  ·  confidence {r.confidence:.2f}\n\n_{r.reason}_"
-        )
-
-    cls = st.session_state.get("last_classification")
-    if cls and cls.label != "support_request":
-        st.info(
-            f"Auto-close path: this ticket was classified as `{cls.label}`. "
-            "No retrieval or drafting needed."
-        )
-        return
-
-    st.divider()
-    st.markdown("### 2 · Retrieve")
-    detected_lang = detect_language(_ticket_text(ticket))
-    detected_country = country_from_labels(ticket.get("labels") or [])
-    st.caption(f"Detected language: `{detected_lang or '—'}`  ·  country: `{detected_country or '—'}`")
-    _render_retrieval(index, ticket)
-
-    st.divider()
-    st.markdown("### 3 · Draft & decide")
-    _render_draft_and_feedback(ticket)
+    col_left, col_right = st.columns([1, 1], gap="large")
+    with col_left:
+        _agent_left_column(ticket, index)
+    with col_right:
+        _agent_right_column(ticket)
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 def main() -> None:
-    st.title("Signal Pilot")
-    st.caption("Support-ticket triage prototype — retrieval + drafter + feedback log")
+    _inject_theme()
+    st.markdown("# Signal Pilot")
+    st.caption("Support-ticket triage — retrieval + drafter + feedback log")
     feedback.init_db()
     index = _load_index()
 
