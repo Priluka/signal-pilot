@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -236,7 +237,41 @@ def render_chat_tab(index: PlaybookIndex) -> None:
         render_playbook_card(hit.playbook, score=hit.score)
 
 
-# ---------- Agent tab (two-column layout) ----------------------------------
+# ---------- Agent tab ------------------------------------------------------
+# Per-ticket session keys — cleared whenever the ticket selection changes or
+# the user clicks "Redo this ticket".
+_PER_TICKET_KEYS: tuple[str, ...] = (
+    "last_classification",
+    "last_hits",
+    "last_draft",
+    "chosen_hit_idx",
+    "draft_for",
+    "draft_text",
+    "feedback_done",
+    "feedback_status",
+)
+
+_SECTION_RE = re.compile(
+    r"^#{2,}\s+(?P<title>.+?)\s*\n(?P<body>.*?)(?=^#{2,}\s|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _extract_section(body: str, *needles: str) -> str:
+    """First ``## Heading`` section whose title contains any of *needles*."""
+    needles_lower = [n.lower() for n in needles]
+    for match in _SECTION_RE.finditer(body):
+        title = match.group("title").lower()
+        if any(n in title for n in needles_lower):
+            return match.group("body").strip()
+    return ""
+
+
+def _reset_per_ticket_state() -> None:
+    for key in _PER_TICKET_KEYS:
+        st.session_state.pop(key, None)
+
+
 def _agent_sidebar(tickets: list[dict[str, Any]]) -> dict[str, Any]:
     with st.sidebar:
         st.markdown("#### Ticket")
@@ -253,8 +288,8 @@ def _agent_sidebar(tickets: list[dict[str, Any]]) -> dict[str, Any]:
     return tickets[chosen]
 
 
-def _agent_left_column(ticket: dict[str, Any], index: PlaybookIndex) -> None:
-    st.markdown("#### Ticket")
+def _render_ticket_card(ticket: dict[str, Any]) -> None:
+    """Ticket header card — always shown expanded, never collapsed behind an expander."""
     summary = html.escape(ticket.get("summary") or "")
     description = html.escape(ticket.get("description") or "")
     meta = _chips([
@@ -268,71 +303,31 @@ def _agent_left_column(ticket: dict[str, Any], index: PlaybookIndex) -> None:
         f'<div class="sp-card-title">{summary}</div>'
         f'<div class="sp-card-meta"><code>{html.escape(ticket.get("key") or "?")}</code>{meta}'
         f'<span class="sp-chip">reporter: {reporter}</span></div>'
-        f'<div class="sp-card-body">{description.replace(chr(10), "<br>")}</div>'
+        f'<div class="sp-card-body" style="white-space:pre-wrap;">{description}</div>'
         '</div>',
         unsafe_allow_html=True,
     )
 
-    st.markdown("#### 1 · Classify")
-    if st.button("Run classifier", key="btn_classify"):
-        with st.spinner("Classifying…"):
-            try:
-                result = classify_ticket(
-                    summary=ticket.get("summary", ""),
-                    description=ticket.get("description", ""),
-                    reporter_email=ticket.get("reporter_email"),
-                    labels=ticket.get("labels") or [],
-                )
-                st.session_state["last_classification"] = result
-            except Exception as exc:
-                st.error(f"Classifier failed: {exc}")
-                return
 
-    cls = st.session_state.get("last_classification")
-    if cls:
-        st.markdown(
-            f'{_classification_pill(cls.label)} '
-            f'<span class="sp-conf-label">conf {cls.confidence:.2f}</span>',
-            unsafe_allow_html=True,
-        )
+def _render_classification(cls) -> None:
+    st.markdown(
+        f'{_classification_pill(cls.label)} '
+        f'<span class="sp-conf-label">conf {cls.confidence:.2f}</span>',
+        unsafe_allow_html=True,
+    )
+    if cls.reason:
         st.caption(cls.reason)
-        if cls.label != "support_request":
-            st.info(
-                f"Auto-close path: this ticket was classified as `{cls.label}`. "
-                "No retrieval or drafting needed."
-            )
-            return
 
-    if not cls:
-        return
 
-    st.markdown("#### 2 · Retrieve")
+def _render_retrieval(hits, ticket: dict[str, Any]) -> None:
     detected_lang = detect_language(_ticket_text(ticket))
     detected_country = country_from_labels(ticket.get("labels") or [])
     st.caption(
         f"Detected language: `{detected_lang or '—'}`  ·  country: `{detected_country or '—'}`"
     )
-
-    if "last_hits" not in st.session_state or st.session_state.get("hits_for") != ticket.get("key"):
-        with st.spinner("Retrieving playbooks…"):
-            hits = retrieve(
-                index,
-                _ticket_text(ticket),
-                labels=ticket.get("labels") or [],
-                ticket_class=None,
-            )
-            st.session_state["last_hits"] = hits
-            st.session_state["hits_for"] = ticket.get("key")
-            st.session_state["chosen_hit_idx"] = 0
-
-    hits = st.session_state.get("last_hits", [])
-    if not hits:
-        st.info("No playbook matched.")
-        return
-
     for h in hits:
         st.markdown(
-            f'<div class="sp-card">'
+            '<div class="sp-card">'
             f'<div class="sp-card-title">#{h.rank + 1}  ·  {html.escape(h.playbook.title)}</div>'
             f'<div class="sp-card-meta"><code>{html.escape(h.playbook.id)}</code>'
             f'{_chips([c for c in [h.playbook.ticket_class, *h.playbook.country_focus] if c])}</div>'
@@ -341,7 +336,6 @@ def _agent_left_column(ticket: dict[str, Any], index: PlaybookIndex) -> None:
             '</div>',
             unsafe_allow_html=True,
         )
-
     options = [f"#{h.rank + 1}  ·  {h.playbook.title}" for h in hits]
     st.radio(
         "Use which playbook for drafting?",
@@ -351,21 +345,51 @@ def _agent_left_column(ticket: dict[str, Any], index: PlaybookIndex) -> None:
     )
 
 
-def _agent_right_column(ticket: dict[str, Any]) -> None:
-    st.markdown("#### 3 · Draft & decide")
+def _render_playbook_source(playbook: Playbook) -> None:
+    """Right-hand pane during drafting — shows where the drafter's content comes from."""
+    st.markdown("##### Playbook source")
+    st.caption(f"`{playbook.id}` — {playbook.title}")
 
-    hits = st.session_state.get("last_hits", [])
-    cls = st.session_state.get("last_classification")
-    if not cls:
-        st.caption("Run the classifier on the left to get started.")
-        return
-    if cls.label != "support_request":
-        st.caption("Ticket is on the auto-close path — no drafting needed.")
-        return
-    if not hits:
-        st.caption("No matched playbooks yet.")
-        return
+    when_applies = playbook.when_applies
+    flow = _extract_section(playbook.body, "Typical resolution flow", "Resolution flow")
+    actions = _extract_section(playbook.body, "Typical actions")
+    safety = _extract_section(playbook.body, "Safety constraints", "Risks")
 
+    if when_applies:
+        st.markdown("**When this applies**")
+        st.markdown(when_applies)
+    if flow:
+        st.markdown("**Typical resolution flow**")
+        st.markdown(flow)
+    if actions:
+        st.markdown("**Typical actions**")
+        st.markdown(actions)
+    if safety:
+        with st.expander("Safety constraints / risks"):
+            st.markdown(safety)
+
+
+def _submit_feedback(
+    *,
+    ticket: dict[str, Any],
+    playbook_id: str,
+    draft_text: str,
+    final_text: str | None,
+    status: str,
+) -> None:
+    feedback.record_feedback(
+        ticket_id=str(ticket.get("key", "?")),
+        playbook_id=playbook_id,
+        draft_text=draft_text,
+        final_text=final_text,
+        status=status,  # type: ignore[arg-type]
+    )
+    st.session_state["feedback_done"] = True
+    st.session_state["feedback_status"] = status
+
+
+def _render_draft_panel(ticket: dict[str, Any], hits) -> None:
+    """Manual 'Generate draft' button → side-by-side draft + playbook source + decision row."""
     chosen_idx = st.session_state.get("chosen_hit_idx", 0)
     chosen_hit = hits[chosen_idx]
     st.caption(f"Drafting against: **{chosen_hit.playbook.title}**")
@@ -373,13 +397,14 @@ def _agent_right_column(ticket: dict[str, Any]) -> None:
     if st.button("Generate draft", type="primary", key="btn_draft"):
         with st.spinner("Drafting reply…"):
             try:
-                draft = draft_reply(
+                st.session_state["last_draft"] = draft_reply(
                     ticket_summary=ticket.get("summary", ""),
                     ticket_description=ticket.get("description", ""),
                     playbook=chosen_hit.playbook,
                 )
-                st.session_state["last_draft"] = draft
                 st.session_state["draft_for"] = (ticket.get("key"), chosen_hit.playbook.id)
+                # Drop any stale edit buffer from a previous draft.
+                st.session_state.pop("draft_text", None)
             except Exception as exc:
                 st.error(f"Drafter failed: {exc}")
                 return
@@ -388,43 +413,85 @@ def _agent_right_column(ticket: dict[str, Any]) -> None:
     if not draft or st.session_state.get("draft_for") != (ticket.get("key"), chosen_hit.playbook.id):
         return
 
-    st.markdown(
-        f'{_action_pill(draft.recommended_action)} '
-        f'<span class="sp-conf-label">{html.escape(draft.rationale)}</span>',
-        unsafe_allow_html=True,
-    )
-    edited = st.text_area("Reply (edit before sending if needed)", value=draft.draft, height=320, key="draft_text")
+    col_draft, col_source = st.columns([1.2, 1], gap="large")
 
-    col_a, col_e, col_r = st.columns(3)
-    with col_a:
-        if st.button("Approve", use_container_width=True, key="btn_approve", type="primary"):
-            feedback.record_feedback(
-                ticket_id=str(ticket.get("key", "?")),
-                playbook_id=chosen_hit.playbook.id,
-                draft_text=draft.draft,
-                final_text=edited if edited != draft.draft else None,
-                status="edited" if edited != draft.draft else "approved",
-            )
-            st.success("Feedback logged.")
-    with col_e:
-        if st.button("Save edit", use_container_width=True, key="btn_edit"):
-            feedback.record_feedback(
-                ticket_id=str(ticket.get("key", "?")),
-                playbook_id=chosen_hit.playbook.id,
-                draft_text=draft.draft,
-                final_text=edited,
-                status="edited",
-            )
-            st.success("Edit logged.")
-    with col_r:
-        if st.button("Reject", use_container_width=True, key="btn_reject"):
-            feedback.record_feedback(
-                ticket_id=str(ticket.get("key", "?")),
-                playbook_id=chosen_hit.playbook.id,
-                draft_text=draft.draft,
-                status="rejected",
-            )
-            st.warning("Rejection logged.")
+    with col_draft:
+        st.markdown("##### Draft reply")
+        st.markdown(
+            f'{_action_pill(draft.recommended_action)} '
+            f'<span class="sp-conf-label">{html.escape(draft.rationale)}</span>',
+            unsafe_allow_html=True,
+        )
+        edited = st.text_area(
+            "Reply (edit before sending if needed)",
+            value=draft.draft,
+            height=340,
+            key="draft_text",
+        )
+
+        st.markdown("##### Decide")
+        col_a, col_e, col_r = st.columns(3)
+        with col_a:
+            if st.button("Approve & send", use_container_width=True, key="btn_approve", type="primary"):
+                _submit_feedback(
+                    ticket=ticket,
+                    playbook_id=chosen_hit.playbook.id,
+                    draft_text=draft.draft,
+                    final_text=edited if edited != draft.draft else None,
+                    status="edited" if edited != draft.draft else "approved",
+                )
+                st.rerun()
+        with col_e:
+            if st.button("Save edit", use_container_width=True, key="btn_edit"):
+                _submit_feedback(
+                    ticket=ticket,
+                    playbook_id=chosen_hit.playbook.id,
+                    draft_text=draft.draft,
+                    final_text=edited,
+                    status="edited",
+                )
+                st.rerun()
+        with col_r:
+            if st.button("Reject", use_container_width=True, key="btn_reject"):
+                _submit_feedback(
+                    ticket=ticket,
+                    playbook_id=chosen_hit.playbook.id,
+                    draft_text=draft.draft,
+                    final_text=None,
+                    status="rejected",
+                )
+                st.rerun()
+
+    with col_source:
+        _render_playbook_source(chosen_hit.playbook)
+
+
+def _render_feedback_done(ticket: dict[str, Any], tickets: list[dict[str, Any]]) -> None:
+    """Confirmation banner + next-ticket / redo controls after a feedback decision."""
+    status = st.session_state.get("feedback_status", "logged")
+    cur_idx = st.session_state.get("agent_ticket_idx", 0)
+    has_next = cur_idx + 1 < len(tickets)
+
+    if status == "rejected":
+        st.warning(f"Rejection logged for **{ticket.get('key')}** — no reply sent.")
+    elif status == "edited":
+        st.success(f"Edited reply logged for **{ticket.get('key')}**.")
+    else:
+        st.success(f"Reply approved for **{ticket.get('key')}**.")
+
+    col_next, col_redo = st.columns([1, 1])
+    with col_next:
+        if has_next:
+            if st.button("Next ticket", type="primary", use_container_width=True, key="btn_next"):
+                st.session_state["_advance_to_next"] = True
+                st.rerun()
+        else:
+            st.caption("No more tickets in the sample.")
+    with col_redo:
+        if st.button("Redo this ticket", use_container_width=True, key="btn_redo"):
+            _reset_per_ticket_state()
+            st.session_state.pop("agent_ticket_key", None)
+            st.rerun()
 
 
 def render_agent_tab(index: PlaybookIndex) -> None:
@@ -436,19 +503,79 @@ def render_agent_tab(index: PlaybookIndex) -> None:
         )
         return
 
+    # Honor a pending "Next ticket" navigation BEFORE the sidebar widget renders,
+    # otherwise Streamlit will refuse to mutate the widget-bound session_state key.
+    if st.session_state.pop("_advance_to_next", False):
+        cur_idx = st.session_state.get("agent_ticket_idx", 0)
+        st.session_state["agent_ticket_idx"] = min(cur_idx + 1, len(tickets) - 1)
+        _reset_per_ticket_state()
+
     ticket = _agent_sidebar(tickets)
 
     # Reset per-ticket state when the selection changes.
     if st.session_state.get("agent_ticket_key") != ticket.get("key"):
-        for k in ("last_classification", "last_hits", "last_draft", "chosen_hit_idx", "hits_for", "draft_for"):
-            st.session_state.pop(k, None)
+        _reset_per_ticket_state()
         st.session_state["agent_ticket_key"] = ticket.get("key")
 
-    col_left, col_right = st.columns([1, 1], gap="large")
-    with col_left:
-        _agent_left_column(ticket, index)
-    with col_right:
-        _agent_right_column(ticket)
+    _render_ticket_card(ticket)
+
+    # If the user has already decided on this ticket, show the confirmation panel
+    # and the next-ticket controls — don't re-run classify/retrieve/draft.
+    if st.session_state.get("feedback_done"):
+        _render_feedback_done(ticket, tickets)
+        return
+
+    # --- Step 1: auto-classify ---------------------------------------------
+    st.markdown("##### Classification")
+    if "last_classification" not in st.session_state:
+        with st.spinner("Classifying ticket…"):
+            try:
+                st.session_state["last_classification"] = classify_ticket(
+                    summary=ticket.get("summary", ""),
+                    description=ticket.get("description", ""),
+                    reporter_email=ticket.get("reporter_email"),
+                    labels=ticket.get("labels") or [],
+                )
+            except Exception as exc:
+                st.error(f"Classifier failed: {exc}")
+                return
+    cls = st.session_state["last_classification"]
+    _render_classification(cls)
+
+    if cls.label != "support_request":
+        st.info(
+            f"Auto-close path: classified as `{cls.label}` — no reply needed. "
+            "Move to the next ticket from the sidebar."
+        )
+        return
+
+    # --- Step 2: auto-retrieve ---------------------------------------------
+    st.markdown("##### Matched playbooks")
+    if "last_hits" not in st.session_state:
+        with st.spinner("Retrieving playbooks…"):
+            try:
+                hits = retrieve(
+                    index,
+                    _ticket_text(ticket),
+                    labels=ticket.get("labels") or [],
+                    ticket_class=None,
+                )
+                st.session_state["last_hits"] = hits
+                st.session_state["chosen_hit_idx"] = 0
+            except Exception as exc:
+                st.error(f"Retrieval failed: {exc}")
+                return
+
+    hits = st.session_state.get("last_hits", [])
+    if not hits:
+        st.info("No playbook matched.")
+        return
+
+    _render_retrieval(hits, ticket)
+
+    # --- Step 3: draft (manual trigger) + decide ---------------------------
+    st.markdown("##### Draft")
+    _render_draft_panel(ticket, hits)
 
 
 # ---------------------------------------------------------------------------
