@@ -83,10 +83,14 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto scrollbar-thin pb-4">
         <SectionHeading>Knowledge Library</SectionHeading>
         <NavRow to="/knowledge" label="Playbooks" count={categories?.total} />
-        <NavRow to="/knowledge/gaps" label="Gaps" count={
-          categories?.issue_categories.find((c) => c.name === 'knowledge_gap')?.count
-        } />
-        <NavRow to="/knowledge/suggestions" label="Suggestions" />
+        <NavRow
+          to="/knowledge?issue_category=knowledge_gap"
+          label="Gaps"
+          count={
+            categories?.issue_categories.find((c) => c.name === 'knowledge_gap')?.count
+          }
+        />
+        <NavRow to="/suggestions" label="Suggestions" />
 
         <SectionHeading>Categories</SectionHeading>
         {error && (
