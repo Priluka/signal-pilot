@@ -92,10 +92,12 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
     setSourcePlaybook(null);
   }, [ticket.key]);
 
-  // Auto-run classify on ticket load.
-  useEffect(() => {
-    if (classification || classifyLoading || classifyError) return;
+  // Classification is manual — fired from the Classify button so the API isn't
+  // billed on every refresh / navigation.
+  function handleClassify() {
+    if (classifyLoading || classification) return;
     setClassifyLoading(true);
+    setClassifyError(null);
     const myTicketKey = ticket.key;
     classifyTicket({
       summary: ticket.summary,
@@ -114,7 +116,7 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
       .finally(() => {
         if (ticketRef.current === myTicketKey) setClassifyLoading(false);
       });
-  }, [ticket, classification, classifyLoading, classifyError]);
+  }
 
   // Auto-run retrieve after a positive classification.
   useEffect(() => {
@@ -261,6 +263,7 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
               loading={classifyLoading}
               error={classifyError}
               classification={classification}
+              onClassify={handleClassify}
             />
 
             {classification?.label === 'support_request' && (
@@ -343,10 +346,12 @@ function ClassifySection({
   loading,
   error,
   classification,
+  onClassify,
 }: {
   loading: boolean;
   error: string | null;
   classification: ClassifyResponse | null;
+  onClassify: () => void;
 }) {
   return (
     <section>
@@ -355,13 +360,38 @@ function ClassifySection({
         <h3 className="text-sm font-semibold text-slate-900">Classification</h3>
       </div>
       <div className="ml-10 bg-panel-surface border border-panel-border rounded-lg p-4">
+        {!classification && !loading && !error && (
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-slate-500">
+              Run the classifier to decide whether this ticket needs a reply.
+            </span>
+            <button
+              type="button"
+              onClick={onClassify}
+              className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors"
+            >
+              Classify
+            </button>
+          </div>
+        )}
         {loading && (
           <div className="text-sm text-slate-400 flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
             Classifying…
           </div>
         )}
-        {error && <div className="text-sm text-red-600">{error}</div>}
+        {error && (
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm text-red-600">{error}</div>
+            <button
+              type="button"
+              onClick={onClassify}
+              className="px-3 py-1.5 text-sm border border-slate-200 text-slate-700 rounded hover:bg-slate-50"
+            >
+              Retry
+            </button>
+          </div>
+        )}
         {classification && !loading && (
           <>
             <div className="flex items-center gap-3">
