@@ -11,6 +11,7 @@ endpoints.
 """
 from __future__ import annotations
 
+import json
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -31,13 +32,26 @@ from fastapi.middleware.cors import CORSMiddleware
 import config
 from core.retrieval import discover_playbook_paths, load_playbook
 
-from .routers import categories, playbooks
+from .routers import agent, categories, chat, feedback, playbooks, tickets
+
+
+def _load_ticket_sample(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                out.append(json.loads(line))
+    return out
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     paths = discover_playbook_paths(config.PLAYBOOKS_DIR)
     app.state.playbooks = [load_playbook(p) for p in paths]
+    app.state.tickets = _load_ticket_sample(config.TICKET_SAMPLE_FILE)
     app.state.index = None  # built lazily on first retrieval request
     yield
 
@@ -65,9 +79,14 @@ def health() -> dict[str, object]:
     return {
         "status": "ok",
         "playbooks_loaded": len(app.state.playbooks) if app.state.playbooks else 0,
+        "tickets_loaded": len(app.state.tickets) if app.state.tickets else 0,
         "index_built": app.state.index is not None,
     }
 
 
 app.include_router(playbooks.router)
 app.include_router(categories.router)
+app.include_router(tickets.router)
+app.include_router(agent.router)
+app.include_router(chat.router)
+app.include_router(feedback.router)

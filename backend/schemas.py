@@ -74,3 +74,114 @@ class CategoriesResponse(BaseModel):
     ticket_classes: list[CountedName]
     issue_categories: list[CountedName]
     by_ticket_class: dict[str, list[CountedName]] = Field(default_factory=dict)
+
+
+# --- Tickets ---------------------------------------------------------------
+class TicketSummary(BaseModel):
+    key: str
+    summary: str
+    status: str = ""
+    status_category: str | None = None
+    priority: str | None = None
+    labels: list[str] = Field(default_factory=list)
+    reporter_email: str | None = None
+    reporter_name: str | None = None
+    created_at: str | None = None
+    resolved_at: str | None = None
+
+
+class TicketDetail(TicketSummary):
+    description: str = ""
+    assignee_name: str | None = None
+    project_key: str | None = None
+    issue_type: str | None = None
+    resolution: str | None = None
+    resolution_minutes: int | None = None
+    comment_count_total: int = 0
+
+
+# --- Agent (classify / retrieve / draft) -----------------------------------
+class ClassifyRequest(BaseModel):
+    summary: str
+    description: str = ""
+    reporter_email: str | None = None
+    labels: list[str] = Field(default_factory=list)
+
+
+class ClassifyResponse(BaseModel):
+    label: str
+    confidence: float
+    reason: str
+
+
+class RetrieveRequest(BaseModel):
+    summary: str
+    description: str = ""
+    labels: list[str] = Field(default_factory=list)
+    ticket_class: str | None = None
+    top_k: int = 3
+
+
+class RetrievalHitOut(BaseModel):
+    playbook_id: str
+    title: str
+    description: str
+    score: float
+    rank: int
+    ticket_class: str
+    issue_category: str
+    country_focus: list[str]
+    languages: list[str]
+    status: str = "active"
+    extraction_confidence: float | None = None
+    project_keys: list[str] = Field(default_factory=list)
+
+
+class RetrieveResponse(BaseModel):
+    hits: list[RetrievalHitOut]
+    detected_language: str | None = None
+    detected_country: str | None = None
+
+
+class DraftRequest(BaseModel):
+    ticket_summary: str
+    ticket_description: str = ""
+    playbook_id: str
+
+
+class DraftResponse(BaseModel):
+    draft: str
+    recommended_action: str
+    rationale: str
+
+
+# --- Chat ------------------------------------------------------------------
+class ChatRequest(BaseModel):
+    question: str
+    top_k: int = 3
+
+
+# --- Feedback --------------------------------------------------------------
+class FeedbackRequest(BaseModel):
+    ticket_id: str
+    playbook_id: str
+    draft_text: str
+    final_text: str | None = None
+    status: str  # 'approved' | 'edited' | 'rejected'
+
+
+class FeedbackRecordOut(BaseModel):
+    id: int
+    ticket_id: str
+    playbook_id: str
+    draft_text: str
+    final_text: str | None
+    status: str
+    timestamp: str
+
+
+class FeedbackStats(BaseModel):
+    approved: int = 0
+    edited: int = 0
+    rejected: int = 0
+    total: int = 0
