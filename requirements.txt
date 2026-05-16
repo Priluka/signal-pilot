@@ -1,0 +1,7 @@
+anthropic>=0.40.0
+sentence-transformers>=3.0.0
+streamlit>=1.36.0
+langdetect>=1.0.9
+pyyaml>=6.0.2
+numpy>=1.26.0
+pytest>=8.0.0
