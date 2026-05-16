@@ -90,6 +90,7 @@ export function Sidebar() {
             categories?.issue_categories.find((c) => c.name === 'knowledge_gap')?.count
           }
         />
+        <NavRow to="/graph" label="Graph" />
         <NavRow to="/suggestions" label="Suggestions" />
 
         <SectionHeading>Categories</SectionHeading>

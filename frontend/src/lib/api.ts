@@ -18,6 +18,7 @@ import type {
   FeedbackRecord,
   FeedbackRequest,
   FeedbackStats,
+  GraphResponse,
   PlaybookDetail,
   PlaybookSummary,
   RetrieveRequest,
@@ -71,6 +72,10 @@ export function getPlaybook(id: string): Promise<PlaybookDetail> {
 
 export function getCategories(): Promise<CategoriesResponse> {
   return json<CategoriesResponse>('/categories');
+}
+
+export function getGraph(): Promise<GraphResponse> {
+  return json<GraphResponse>('/playbooks/graph');
 }
 
 // --- Tickets ---------------------------------------------------------------

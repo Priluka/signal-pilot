@@ -164,6 +164,29 @@ export interface FeedbackStats {
   total: number;
 }
 
+// Knowledge graph
+export interface GraphNode {
+  id: string;
+  title: string;
+  ticket_class: string;
+  issue_category: string;
+  cluster_size: number | null;
+  extraction_confidence: number | null;
+  status: string;
+  degree: number;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+}
+
+export interface GraphResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+
 // SSE event payloads
 export interface ChatSourcesEvent {
   hits: RetrievalHitOut[];

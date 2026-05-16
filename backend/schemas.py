@@ -76,6 +76,28 @@ class CategoriesResponse(BaseModel):
     by_ticket_class: dict[str, list[CountedName]] = Field(default_factory=dict)
 
 
+# --- Knowledge graph -------------------------------------------------------
+class GraphNode(BaseModel):
+    id: str
+    title: str
+    ticket_class: str
+    issue_category: str
+    cluster_size: int | None = None
+    extraction_confidence: float | None = None
+    status: str = "active"
+    degree: int = 0
+
+
+class GraphEdge(BaseModel):
+    source: str
+    target: str
+
+
+class GraphResponse(BaseModel):
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+
+
 # --- Tickets ---------------------------------------------------------------
 class TicketSummary(BaseModel):
     key: str

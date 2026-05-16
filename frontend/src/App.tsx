@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { AgentPage } from './pages/AgentPage';
 import { ChatPage } from './pages/ChatPage';
 import { ComingSoonPage } from './pages/ComingSoonPage';
+import { GraphPage } from './pages/GraphPage';
 import { KnowledgePage } from './pages/KnowledgePage';
 
 
@@ -15,6 +16,7 @@ function App() {
           <Route path="/" element={<Navigate to="/knowledge" replace />} />
           <Route path="/knowledge" element={<KnowledgePage />} />
           <Route path="/knowledge/:slug" element={<KnowledgePage />} />
+          <Route path="/graph" element={<GraphPage />} />
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/agent" element={<AgentPage />} />
           <Route path="/agent/:ticketKey" element={<AgentPage />} />
