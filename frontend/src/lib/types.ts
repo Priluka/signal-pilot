@@ -29,6 +29,30 @@ export interface EvidenceQuote {
   quote: string;
 }
 
+export interface ROIStrategy {
+  hours_midpoint: number | null;
+  hours_range_low: number | null;
+  hours_range_high: number | null;
+  confidence_tier: string | null;
+}
+
+export interface ROIBreakdown {
+  baseline_active_hours: number | null;
+  baseline_confidence_tier: string | null;
+  agent_assist: ROIStrategy | null;
+  product_fix: ROIStrategy | null;
+  deflection: ROIStrategy | null;
+  autonomous_resolve: ROIStrategy | null;
+}
+
+export interface RelatedPlaybookOut {
+  id: string;
+  title: string;
+  description: string;
+  issue_category: string;
+  status: string;
+}
+
 export interface PlaybookDetail extends PlaybookSummary {
   when_applies: string;
   resolution_flow: string;
@@ -41,12 +65,15 @@ export interface PlaybookDetail extends PlaybookSummary {
   evidence_quotes: EvidenceQuote[];
   canonical_examples: string[];
   related_playbooks: string[];
+  related_playbooks_resolved: RelatedPlaybookOut[];
   created: string | null;
   updated: string | null;
   correction_count: number;
+  sample_size_used: number | null;
   frequency_per_month: number | null;
   median_resolution_minutes: number | null;
   cluster_id: string | null;
+  roi: ROIBreakdown | null;
   metadata: Record<string, unknown>;
 }
 

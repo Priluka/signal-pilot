@@ -41,6 +41,36 @@ class EvidenceQuote(BaseModel):
     quote: str
 
 
+class ROIStrategy(BaseModel):
+    """One automation/intervention strategy and its estimated hours saved."""
+
+    hours_midpoint: float | None = None
+    hours_range_low: float | None = None
+    hours_range_high: float | None = None
+    confidence_tier: str | None = None
+
+
+class ROIBreakdown(BaseModel):
+    """The four ROI strategies plus the baseline annual active-work estimate."""
+
+    baseline_active_hours: float | None = None
+    baseline_confidence_tier: str | None = None
+    agent_assist: ROIStrategy | None = None
+    product_fix: ROIStrategy | None = None
+    deflection: ROIStrategy | None = None
+    autonomous_resolve: ROIStrategy | None = None
+
+
+class RelatedPlaybookOut(BaseModel):
+    """Lookup result for a related-playbook reference."""
+
+    id: str
+    title: str
+    description: str
+    issue_category: str = ""
+    status: str = "active"
+
+
 class PlaybookDetail(PlaybookSummary):
     """Full playbook view for the viewer pane."""
 
@@ -55,12 +85,15 @@ class PlaybookDetail(PlaybookSummary):
     evidence_quotes: list[EvidenceQuote] = Field(default_factory=list)
     canonical_examples: list[str] = Field(default_factory=list)
     related_playbooks: list[str] = Field(default_factory=list)
+    related_playbooks_resolved: list[RelatedPlaybookOut] = Field(default_factory=list)
     created: str | None = None
     updated: str | None = None
     correction_count: int = 0
+    sample_size_used: int | None = None
     frequency_per_month: float | None = None
     median_resolution_minutes: float | None = None
     cluster_id: str | None = None
+    roi: ROIBreakdown | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

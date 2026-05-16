@@ -126,7 +126,8 @@ def get_playbook(
     playbook_id: str,
     playbooks: list[Playbook] = Depends(get_playbooks),
 ) -> PlaybookDetail:
-    for pb in playbooks:
-        if pb.id == playbook_id:
-            return to_detail(pb)
-    raise HTTPException(status_code=404, detail=f"Playbook {playbook_id!r} not found")
+    by_id = {pb.id: pb for pb in playbooks}
+    pb = by_id.get(playbook_id)
+    if pb is None:
+        raise HTTPException(status_code=404, detail=f"Playbook {playbook_id!r} not found")
+    return to_detail(pb, by_id=by_id)

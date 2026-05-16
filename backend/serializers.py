@@ -6,7 +6,15 @@ from typing import Any
 
 from core.retrieval import Playbook, extract_section
 
-from .schemas import EvidenceQuote, PlaybookDetail, PlaybookSummary, TicketActionRow
+from .schemas import (
+    EvidenceQuote,
+    PlaybookDetail,
+    PlaybookSummary,
+    RelatedPlaybookOut,
+    ROIBreakdown,
+    ROIStrategy,
+    TicketActionRow,
+)
 
 
 # Numbered "1. step text" lines inside the resolution flow.
@@ -118,9 +126,75 @@ def to_summary(pb: Playbook) -> PlaybookSummary:
     )
 
 
-def to_detail(pb: Playbook) -> PlaybookDetail:
+def _parse_roi(meta: dict[str, Any]) -> ROIBreakdown | None:
+    """Pull the four strategies + baseline out of the flat ``roi`` mapping
+    in the YAML frontmatter. Returns None if the playbook has no ``roi`` block."""
+    roi = meta.get("roi")
+    if not isinstance(roi, dict):
+        return None
+
+    def _strategy(prefix: str) -> ROIStrategy | None:
+        mid = roi.get(f"{prefix}_hours_midpoint")
+        rng = roi.get(f"{prefix}_hours_range")
+        tier = roi.get(f"{prefix}_confidence_tier")
+        if mid is None and rng is None and tier is None:
+            return None
+        low, high = None, None
+        if isinstance(rng, (list, tuple)) and len(rng) >= 2:
+            low = _opt_float(rng[0])
+            high = _opt_float(rng[1])
+        return ROIStrategy(
+            hours_midpoint=_opt_float(mid),
+            hours_range_low=low,
+            hours_range_high=high,
+            confidence_tier=str(tier) if tier else None,
+        )
+
+    return ROIBreakdown(
+        baseline_active_hours=_opt_float(roi.get("baseline_active_hours")),
+        baseline_confidence_tier=(
+            str(roi.get("baseline_confidence_tier"))
+            if roi.get("baseline_confidence_tier")
+            else None
+        ),
+        agent_assist=_strategy("agent_assist"),
+        product_fix=_strategy("product_fix"),
+        deflection=_strategy("deflection"),
+        autonomous_resolve=_strategy("autonomous_resolve"),
+    )
+
+
+def _resolve_related(
+    related_ids: list[str],
+    by_id: dict[str, Playbook] | None,
+) -> list[RelatedPlaybookOut]:
+    if not by_id:
+        return []
+    out: list[RelatedPlaybookOut] = []
+    for rid in related_ids:
+        target = by_id.get(str(rid))
+        if target is None:
+            continue
+        out.append(
+            RelatedPlaybookOut(
+                id=target.id,
+                title=target.title,
+                description=target.description,
+                issue_category=target.issue_category,
+                status=str(target.metadata.get("status") or "active"),
+            )
+        )
+    return out
+
+
+def to_detail(
+    pb: Playbook,
+    *,
+    by_id: dict[str, Playbook] | None = None,
+) -> PlaybookDetail:
     meta = pb.metadata
     summary = to_summary(pb)
+    related_ids = _as_str_list(meta.get("related_playbooks"))
     return PlaybookDetail(
         **summary.model_dump(),
         when_applies=pb.when_applies,
@@ -133,12 +207,15 @@ def to_detail(pb: Playbook) -> PlaybookDetail:
         evidence_tickets=_as_str_list(meta.get("evidence_tickets")),
         evidence_quotes=parse_evidence_quotes(pb.body),
         canonical_examples=_as_str_list(meta.get("canonical_examples")),
-        related_playbooks=_as_str_list(meta.get("related_playbooks")),
+        related_playbooks=related_ids,
+        related_playbooks_resolved=_resolve_related(related_ids, by_id),
         created=str(meta.get("created")) if meta.get("created") else None,
         updated=str(meta.get("updated")) if meta.get("updated") else None,
         correction_count=int(meta.get("correction_count") or 0),
+        sample_size_used=_opt_int(meta.get("sample_size_used")),
         frequency_per_month=_opt_float(meta.get("frequency_per_month")),
         median_resolution_minutes=_opt_float(meta.get("median_resolution_minutes")),
         cluster_id=str(meta.get("cluster_id")) if meta.get("cluster_id") else None,
+        roi=_parse_roi(meta),
         metadata=meta,
     )

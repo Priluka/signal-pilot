@@ -1,21 +1,23 @@
-/** Knowledge tab — playbook list (left) + viewer (right).
+/** Knowledge tab — playbook list (left) + viewer (center) + metadata sidebar (right).
  *
  * URL state:
- *   /knowledge                            → list visible, viewer shows empty state
- *   /knowledge/:slug                      → viewer shows the selected playbook
- *   ?issue_category=billing&ticket_class=end_user&q=...   → narrows the list
+ *   /knowledge                            → list visible, viewer empty, no right rail
+ *   /knowledge/:slug                      → viewer + right rail show the selected playbook
+ *   ?issue_category=billing&...           → narrows the list
  */
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 
 import { PlaybookList } from '../components/PlaybookList';
+import { PlaybookSidebar } from '../components/PlaybookSidebar';
 import { PlaybookViewer } from '../components/PlaybookViewer';
-import { listPlaybooks, type PlaybookFilters } from '../lib/api';
-import type { PlaybookSummary } from '../lib/types';
+import { getPlaybook, listPlaybooks, type PlaybookFilters } from '../lib/api';
+import type { PlaybookDetail, PlaybookSummary } from '../lib/types';
 
 
 export function KnowledgePage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { slug } = useParams();
 
   const filters: PlaybookFilters = useMemo(
     () => ({
@@ -27,29 +29,60 @@ export function KnowledgePage() {
     [searchParams],
   );
 
+  // --- List state ---------------------------------------------------------
   const [playbooks, setPlaybooks] = useState<PlaybookSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    setListLoading(true);
+    setListError(null);
     listPlaybooks(filters)
       .then((data) => {
         if (!cancelled) setPlaybooks(data);
       })
       .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) setListError(err.message);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setListLoading(false);
       });
     return () => {
       cancelled = true;
     };
   }, [filters]);
+
+  // --- Detail state (single fetch, fed to both viewer and sidebar) --------
+  const [detail, setDetail] = useState<PlaybookDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!slug) {
+      setDetail(null);
+      setDetailError(null);
+      return;
+    }
+    let cancelled = false;
+    setDetailLoading(true);
+    setDetailError(null);
+    setDetail(null);
+    getPlaybook(slug)
+      .then((data) => {
+        if (!cancelled) setDetail(data);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setDetailError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
 
   const activeFilters = Object.entries(filters).filter(([, v]) => v) as [string, string][];
 
@@ -86,14 +119,20 @@ export function KnowledgePage() {
       <div className="flex-1 flex overflow-hidden">
         <PlaybookList
           playbooks={playbooks}
-          loading={loading}
-          error={error}
+          loading={listLoading}
+          error={listError}
           search={search}
           onSearchChange={setSearch}
           totalCount={playbooks.length}
           searchString={searchParams.toString() ? `?${searchParams.toString()}` : ''}
         />
-        <PlaybookViewer />
+        <PlaybookViewer
+          playbook={detail}
+          loading={detailLoading}
+          error={detailError}
+          hasSelection={Boolean(slug)}
+        />
+        {detail && <PlaybookSidebar playbook={detail} />}
       </div>
     </div>
   );

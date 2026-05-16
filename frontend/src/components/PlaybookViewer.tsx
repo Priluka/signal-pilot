@@ -1,15 +1,20 @@
-/** Right column of the Knowledge page — full playbook detail. */
-import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+/** Center column of the Knowledge page — playbook prose.
+ *
+ * Presentational only: the parent (KnowledgePage) owns the fetch and passes
+ * the result down so the right-hand metadata sidebar can use the same data
+ * without duplicating the request. Stats / related / evidence-ticket lists
+ * live in the right sidebar; this column carries the title + narrative
+ * sections + suggest-an-edit form.
+ */
+import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { getPlaybook, submitSuggestion } from '../lib/api';
+import { submitSuggestion } from '../lib/api';
 import type { PlaybookDetail } from '../lib/types';
 
 import {
   Chip,
-  ConfidenceBar,
   SectionHeading,
   StatusBadge,
   StepCircle,
@@ -17,36 +22,16 @@ import {
 } from './ui';
 
 
-export function PlaybookViewer() {
-  const { slug } = useParams();
-  const [playbook, setPlaybook] = useState<PlaybookDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+interface Props {
+  playbook: PlaybookDetail | null;
+  loading: boolean;
+  error: string | null;
+  hasSelection: boolean;
+}
 
-  useEffect(() => {
-    if (!slug) {
-      setPlaybook(null);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    getPlaybook(slug)
-      .then((data) => {
-        if (!cancelled) setPlaybook(data);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [slug]);
 
-  if (!slug) {
+export function PlaybookViewer({ playbook, loading, error, hasSelection }: Props) {
+  if (!hasSelection) {
     return (
       <div className="flex items-center justify-center flex-1 text-sm text-slate-400">
         Select a playbook from the list to view its content.
@@ -74,7 +59,6 @@ export function PlaybookViewer() {
     <div className="flex-1 overflow-y-auto scrollbar-thin">
       <article className="max-w-3xl mx-auto px-8 py-8 space-y-8">
         <Header playbook={playbook} />
-        <Stats playbook={playbook} />
         {playbook.when_applies && <WhenApplies markdown={playbook.when_applies} />}
         {playbook.resolution_steps.length > 0 && (
           <ResolutionSteps steps={playbook.resolution_steps} />
@@ -83,16 +67,9 @@ export function PlaybookViewer() {
           <ActionsTable rows={playbook.typical_actions_rows} />
         )}
         {playbook.evidence_quotes.length > 0 && (
-          <Evidence
-            quotes={playbook.evidence_quotes}
-            allTickets={playbook.evidence_tickets}
-            clusterSize={playbook.cluster_size}
-          />
+          <EvidenceQuotes quotes={playbook.evidence_quotes} />
         )}
         {playbook.risks && <Risks markdown={playbook.risks} />}
-        {playbook.related_playbooks.length > 0 && (
-          <Related ids={playbook.related_playbooks} />
-        )}
         <SuggestEdit playbookId={playbook.id} />
       </article>
     </div>
@@ -128,46 +105,6 @@ function Header({ playbook }: { playbook: PlaybookDetail }) {
         ))}
       </div>
     </header>
-  );
-}
-
-
-function Stats({ playbook }: { playbook: PlaybookDetail }) {
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 py-4 border-y border-panel-divider">
-      <Stat label="Confidence">
-        <ConfidenceBar score={playbook.extraction_confidence} />
-      </Stat>
-      <Stat label="Learned from">
-        <span className="text-sm font-medium text-slate-900">
-          {playbook.cluster_size ?? '—'} tickets
-        </span>
-      </Stat>
-      <Stat label="Frequency">
-        <span className="text-sm font-medium text-slate-900">
-          {playbook.frequency_per_month != null
-            ? `${playbook.frequency_per_month.toFixed(2)}/mo`
-            : '—'}
-        </span>
-      </Stat>
-      <Stat label="Updated">
-        <span className="text-sm font-medium text-slate-900">
-          {playbook.updated ?? '—'}
-        </span>
-      </Stat>
-    </div>
-  );
-}
-
-
-function Stat({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="text-[11px] font-semibold tracking-wider uppercase text-slate-500">
-        {label}
-      </div>
-      <div className="mt-1">{children}</div>
-    </div>
   );
 }
 
@@ -247,21 +184,14 @@ function ActionsTable({
 }
 
 
-function Evidence({
+function EvidenceQuotes({
   quotes,
-  allTickets,
-  clusterSize,
 }: {
   quotes: { ticket_id: string; language: string | null; quote: string }[];
-  allTickets: string[];
-  clusterSize: number | null;
 }) {
   return (
     <section>
-      <SectionHeading>Evidence</SectionHeading>
-      <p className="text-xs text-slate-500 mb-3">
-        Derived from {clusterSize ?? allTickets.length} tickets · {quotes.length} representative quotes
-      </p>
+      <SectionHeading>Evidence quotes</SectionHeading>
       <ul className="space-y-3">
         {quotes.map((q, i) => (
           <li
@@ -280,18 +210,6 @@ function Evidence({
           </li>
         ))}
       </ul>
-      {allTickets.length > quotes.length && (
-        <details className="mt-3">
-          <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-700">
-            Show all {allTickets.length} source tickets
-          </summary>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {allTickets.map((t) => (
-              <TicketChip key={t} id={t} />
-            ))}
-          </div>
-        </details>
-      )}
     </section>
   );
 }
@@ -309,27 +227,6 @@ function Risks({ markdown }: { markdown: string }) {
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
         </div>
       </details>
-    </section>
-  );
-}
-
-
-function Related({ ids }: { ids: string[] }) {
-  return (
-    <section>
-      <SectionHeading>Related playbooks</SectionHeading>
-      <ul className="space-y-1">
-        {ids.map((id) => (
-          <li key={id}>
-            <Link
-              to={`/knowledge/${id}`}
-              className="text-sm text-blue-600 hover:text-blue-700 hover:underline font-mono"
-            >
-              {id}
-            </Link>
-          </li>
-        ))}
-      </ul>
     </section>
   );
 }
