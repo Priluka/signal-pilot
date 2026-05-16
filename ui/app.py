@@ -28,6 +28,7 @@ import streamlit as st
 
 import config
 import core.feedback as feedback
+from core.answerer import extract_cited_ids, stream_answer
 from core.classifier import classify_ticket
 from core.drafter import draft_reply
 from core.embeddings import get_embedding_provider
@@ -202,10 +203,29 @@ def render_knowledge_tab(index: PlaybookIndex) -> None:
         render_playbook_card(pb)
 
 
+def _render_chat_source_card(hit, cited: bool) -> None:
+    """Source playbook card under the Chat answer; flags whether the answer cited it."""
+    cited_badge = (
+        '<span class="sp-pill sp-pill-support">cited</span>' if cited else ''
+    )
+    chips = _chips([c for c in [hit.playbook.ticket_class, *hit.playbook.country_focus] if c])
+    st.markdown(
+        '<div class="sp-card">'
+        f'<div class="sp-card-title">{html.escape(hit.playbook.title)} {cited_badge}</div>'
+        f'<div class="sp-card-meta"><code>{html.escape(hit.playbook.id)}</code>{chips}</div>'
+        f'{confidence_bar(hit.score)}'
+        f'<div class="sp-card-body">{html.escape(hit.playbook.description)}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    with st.expander("Show full playbook"):
+        st.markdown(hit.playbook.body)
+
+
 def render_chat_tab(index: PlaybookIndex) -> None:
     with st.sidebar:
         st.markdown("#### Search options")
-        top_k = st.slider("How many playbooks to cite", 1, 5, config.TOP_K_RETRIEVAL, key="chat_topk")
+        top_k = st.slider("Playbooks to consult", 1, 5, 3, key="chat_topk")
 
     st.markdown("### Ask the knowledge base")
     question = st.text_area(
@@ -214,27 +234,74 @@ def render_chat_tab(index: PlaybookIndex) -> None:
         placeholder="e.g. What do I tell a Croatian customer who got a parking fine despite paying via the app?",
     )
 
-    if not st.button("Search", type="primary"):
-        return
-    if not question.strip():
-        st.warning("Type a question first.")
+    col_ask, col_clear = st.columns([1, 5])
+    with col_ask:
+        ask = st.button("Ask", type="primary", use_container_width=True)
+    with col_clear:
+        if st.session_state.get("chat_state") and st.button("Clear", key="chat_clear"):
+            st.session_state.pop("chat_state", None)
+            st.rerun()
+
+    # Fresh question → retrieve and stream a new answer, then persist to session_state.
+    if ask:
+        if not question.strip():
+            st.warning("Type a question first.")
+            return
+
+        provider = get_embedding_provider()
+        query_vector = np.asarray(provider.embed(question), dtype=np.float32)
+        hits = index.search(
+            query_vector,
+            country=None,
+            language=detect_language(question),
+            ticket_class=None,
+            top_k=top_k,
+        )
+        if not hits:
+            st.info("No matches above the confidence floor.")
+            return
+
+        playbooks = [h.playbook for h in hits]
+
+        st.markdown("##### Answer")
+        st.caption(f"Sonnet 4.6 · grounded in {len(playbooks)} playbook(s)")
+        try:
+            gen = stream_answer(question=question, playbooks=playbooks)
+            answer_text = st.write_stream(gen) or ""
+        except Exception as exc:
+            st.error(f"Answer generation failed: {exc}")
+            return
+
+        cited_ids = extract_cited_ids(answer_text, playbooks)
+        st.session_state["chat_state"] = {
+            "question": question,
+            "answer": answer_text,
+            "hits": hits,
+            "cited_ids": cited_ids,
+        }
+
+        # Sources panel after a fresh stream
+        _render_chat_sources(hits, set(cited_ids))
         return
 
-    provider = get_embedding_provider()
-    query_vector = np.asarray(provider.embed(question), dtype=np.float32)
-    hits = index.search(
-        query_vector,
-        country=None,
-        language=detect_language(question),
-        ticket_class=None,
-        top_k=top_k,
-    )
-    if not hits:
-        st.info("No matches above the confidence floor.")
-        return
+    # No fresh question this run — replay the last answer from session_state if any.
+    state = st.session_state.get("chat_state")
+    if state:
+        st.markdown("##### Answer")
+        st.caption(f"Sonnet 4.6 · grounded in {len(state['hits'])} playbook(s)  ·  asked: _{state['question']}_")
+        st.markdown(state["answer"])
+        _render_chat_sources(state["hits"], set(state["cited_ids"]))
 
+
+def _render_chat_sources(hits, cited_set: set[str]) -> None:
+    st.markdown("##### Sources")
+    if cited_set:
+        cited_codes = ", ".join(f"`{c}`" for c in cited_set)
+        st.caption(f"Cited in answer: {cited_codes}")
+    else:
+        st.caption("No inline citations detected — answer may be ungrounded; double-check.")
     for hit in hits:
-        render_playbook_card(hit.playbook, score=hit.score)
+        _render_chat_source_card(hit, cited=hit.playbook.id in cited_set)
 
 
 # ---------- Agent tab ------------------------------------------------------
