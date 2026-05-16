@@ -6,6 +6,7 @@ import { ChatPage } from './pages/ChatPage';
 import { ComingSoonPage } from './pages/ComingSoonPage';
 import { GraphPage } from './pages/GraphPage';
 import { KnowledgePage } from './pages/KnowledgePage';
+import { SuggestionsPage } from './pages/SuggestionsPage';
 
 
 function App() {
@@ -20,15 +21,7 @@ function App() {
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/agent" element={<AgentPage />} />
           <Route path="/agent/:ticketKey" element={<AgentPage />} />
-          <Route
-            path="/suggestions"
-            element={
-              <ComingSoonPage
-                title="Suggestions"
-                description="Operator-submitted edits to playbooks land here for review before being merged. Wiring pending."
-              />
-            }
-          />
+          <Route path="/suggestions" element={<SuggestionsPage />} />
           <Route
             path="/agents/deployed"
             element={

@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { getPlaybook } from '../lib/api';
+import { getPlaybook, submitSuggestion } from '../lib/api';
 import type { PlaybookDetail } from '../lib/types';
 
 import {
@@ -337,20 +337,23 @@ function Related({ ids }: { ids: string[] }) {
 
 function SuggestEdit({ playbookId }: { playbookId: string }) {
   const [text, setText] = useState('');
-  const [submitted, setSubmitted] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!text.trim()) return;
-    // Backend route for suggestions is pending — log locally for now so the
-    // form is functional end-to-end as soon as we wire /suggestions later.
-    // eslint-disable-next-line no-console
-    console.info('[suggestion]', { playbookId, text });
-    setSubmitted(true);
-    setTimeout(() => {
-      setSubmitted(false);
+    if (!text.trim() || status === 'saving') return;
+    setStatus('saving');
+    setErrorMsg(null);
+    try {
+      await submitSuggestion({ playbook_id: playbookId, text });
+      setStatus('saved');
       setText('');
-    }, 2500);
+      setTimeout(() => setStatus('idle'), 2500);
+    } catch (err) {
+      setErrorMsg((err as Error).message);
+      setStatus('error');
+    }
   }
 
   return (
@@ -363,17 +366,22 @@ function SuggestEdit({ playbookId }: { playbookId: string }) {
           rows={3}
           placeholder="Spotted something wrong, missing, or out-of-date in this playbook? Describe the change."
           className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 resize-y"
+          disabled={status === 'saving'}
         />
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <p className="text-[11px] text-slate-400">
-            Suggestions are reviewed before being merged into the playbook.
+            {status === 'error' && errorMsg ? (
+              <span className="text-red-600">{errorMsg}</span>
+            ) : (
+              <>Stored under /suggestions for review.</>
+            )}
           </p>
           <button
             type="submit"
-            disabled={!text.trim()}
+            disabled={!text.trim() || status === 'saving'}
             className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
           >
-            {submitted ? 'Saved' : 'Submit'}
+            {status === 'saving' ? 'Saving…' : status === 'saved' ? 'Saved' : 'Submit'}
           </button>
         </div>
       </form>

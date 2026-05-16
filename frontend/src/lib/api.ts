@@ -23,6 +23,8 @@ import type {
   PlaybookSummary,
   RetrieveRequest,
   RetrieveResponse,
+  SuggestionRecord,
+  SuggestionRequest,
   TicketDetail,
   TicketSummary,
 } from './types';
@@ -119,6 +121,19 @@ export function submitFeedback(req: FeedbackRequest): Promise<FeedbackRecord> {
 
 export function getFeedbackStats(): Promise<FeedbackStats> {
   return json<FeedbackStats>('/feedback/stats');
+}
+
+// --- Suggestions -----------------------------------------------------------
+export function submitSuggestion(req: SuggestionRequest): Promise<SuggestionRecord> {
+  return json<SuggestionRecord>('/suggestions', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+export function listSuggestions(playbookId?: string): Promise<SuggestionRecord[]> {
+  const qs = playbookId ? `?playbook_id=${encodeURIComponent(playbookId)}` : '';
+  return json<SuggestionRecord[]>(`/suggestions${qs}`);
 }
 
 // --- Chat (SSE) ------------------------------------------------------------

@@ -32,7 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import config
 from core.retrieval import discover_playbook_paths, load_playbook
 
-from .routers import agent, categories, chat, feedback, playbooks, tickets
+from .routers import agent, categories, chat, feedback, playbooks, suggestions, tickets
 
 
 def _load_ticket_sample(path: Path) -> list[dict]:
@@ -90,3 +90,4 @@ app.include_router(tickets.router)
 app.include_router(agent.router)
 app.include_router(chat.router)
 app.include_router(feedback.router)
+app.include_router(suggestions.router)

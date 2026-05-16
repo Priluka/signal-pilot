@@ -164,6 +164,19 @@ export interface FeedbackStats {
   total: number;
 }
 
+export interface SuggestionRequest {
+  playbook_id: string;
+  text: string;
+}
+
+export interface SuggestionRecord {
+  id: number;
+  playbook_id: string;
+  text: string;
+  status: string;
+  timestamp: string;
+}
+
 // Knowledge graph
 export interface GraphNode {
   id: string;

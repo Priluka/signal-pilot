@@ -207,3 +207,17 @@ class FeedbackStats(BaseModel):
     edited: int = 0
     rejected: int = 0
     total: int = 0
+
+
+# --- Suggestions -----------------------------------------------------------
+class SuggestionRequest(BaseModel):
+    playbook_id: str
+    text: str
+
+
+class SuggestionRecordOut(BaseModel):
+    id: int
+    playbook_id: str
+    text: str
+    status: str
+    timestamp: str
