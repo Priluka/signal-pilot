@@ -42,11 +42,23 @@ _COUNTRY_TOKEN_TO_ISO: dict[str, str] = {
     "de": "de",
 }
 
-_WHEN_APPLIES_RE = re.compile(
-    r"^##\s+When this applies\s*\n(?P<body>.*?)(?=^##\s|\Z)",
+_SECTION_RE = re.compile(
+    r"^#{2,}\s+(?P<title>.+?)\s*\n(?P<body>.*?)(?=^#{2,}\s|\Z)",
     re.MULTILINE | re.DOTALL,
 )
 _FRONTMATTER_RE = re.compile(r"^---\n(?P<yaml>.*?)\n---\n(?P<body>.*)$", re.DOTALL)
+
+
+def extract_section(body: str, *needles: str) -> str:
+    """Return the body of the first ``## Heading`` (any level ≥2) whose title
+    contains any of *needles* (case-insensitive). Empty string if no match.
+    """
+    needles_lower = [n.lower() for n in needles]
+    for match in _SECTION_RE.finditer(body):
+        title = match.group("title").lower()
+        if any(n in title for n in needles_lower):
+            return match.group("body").strip()
+    return ""
 
 
 @dataclass
@@ -64,6 +76,9 @@ class Playbook:
     country_focus: list[str]
     resolution_pattern: str
     when_applies: str
+    resolution_flow: str
+    typical_actions: str
+    risks: str
     body: str
     raw: str
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -96,11 +111,6 @@ def _parse_frontmatter(raw: str) -> tuple[dict[str, Any], str]:
     return meta, match.group("body")
 
 
-def _extract_when_applies(body: str) -> str:
-    match = _WHEN_APPLIES_RE.search(body)
-    return match.group("body").strip() if match else ""
-
-
 def _as_str_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -126,7 +136,10 @@ def load_playbook(path: Path) -> Playbook:
         languages=[s.lower() for s in _as_str_list(meta.get("languages"))],
         country_focus=[s.lower() for s in _as_str_list(meta.get("country_focus"))],
         resolution_pattern=str(meta.get("resolution_pattern", "")),
-        when_applies=_extract_when_applies(body),
+        when_applies=extract_section(body, "When this applies"),
+        resolution_flow=extract_section(body, "Typical resolution flow", "Resolution flow"),
+        typical_actions=extract_section(body, "Typical actions"),
+        risks=extract_section(body, "Safety constraints", "Risks"),
         body=body,
         raw=raw,
         metadata=meta,
