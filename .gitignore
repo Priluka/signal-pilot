@@ -25,5 +25,11 @@ env/
 *.db
 data/cache/
 
+# Node.js (frontend has its own .gitignore; these are a safety net against
+# accidental root-level installs from a botched `cd frontend && npm i`.)
+/node_modules/
+/package.json
+/package-lock.json
+
 # Streamlit
 .streamlit/secrets.toml
