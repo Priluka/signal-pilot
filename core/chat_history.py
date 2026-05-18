@@ -57,7 +57,8 @@ def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     # timeout=10 lets the reader/writer threads block briefly on the SQLite
     # file lock instead of bouncing with "database is locked" — important now
     # that the chat generator thread writes while the SSE tail thread reads.
-    conn = sqlite3.connect(db_path, timeout=10.0)
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     try:
         yield conn
