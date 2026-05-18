@@ -207,13 +207,17 @@ export function InboxPage() {
         )}
       </header>
       <div className="flex-1 flex overflow-hidden">
-        {inboxRows.length === 0 ? (
+        {ticketsLoading || metrics === null ? (
+          <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
+            Loading inbox…
+          </div>
+        ) : inboxRows.length === 0 ? (
           <AllCaughtUp running={batch?.running ?? false} processed={batch?.processed ?? 0} total={batch?.total ?? 0} />
         ) : (
           <>
             <AgentInbox
               rows={inboxRows}
-              loading={ticketsLoading}
+              loading={false}
               error={ticketsError}
             />
             {activeLoading ? (
