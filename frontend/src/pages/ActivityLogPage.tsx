@@ -77,7 +77,8 @@ export function ActivityLogPage() {
       setSessions(s);
       setMetrics(m);
     } catch {
-      // ignored
+      // Swallow — periodic poll retries; we never want a transient error
+      // to trap the page in loading state.
     } finally {
       setLoading(false);
     }

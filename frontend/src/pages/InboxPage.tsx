@@ -44,6 +44,7 @@ export function InboxPage() {
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [metrics, setMetrics] = useState<AgentMetrics | null>(null);
   const [batch, setBatch] = useState<BatchStatus | null>(null);
+  const [initialLoaded, setInitialLoaded] = useState(false);
 
   const [activeTicket, setActiveTicket] = useState<TicketDetail | null>(null);
   const [activeLoading, setActiveLoading] = useState(false);
@@ -54,7 +55,12 @@ export function InboxPage() {
       setSessions(s);
       setMetrics(m);
     } catch {
-      // ignored
+      // Swallow — the periodic poll will try again on the next tick.
+    } finally {
+      // We let the page out of its loading state on first attempt regardless
+      // of outcome, so a failed metrics fetch doesn't trap the operator in
+      // an infinite spinner.
+      setInitialLoaded(true);
     }
   }, []);
 
@@ -207,7 +213,7 @@ export function InboxPage() {
         )}
       </header>
       <div className="flex-1 flex overflow-hidden">
-        {ticketsLoading || metrics === null ? (
+        {!initialLoaded || ticketsLoading ? (
           <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
             Loading inbox…
           </div>
