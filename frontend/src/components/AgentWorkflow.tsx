@@ -12,7 +12,9 @@ import remarkGfm from 'remark-gfm';
 
 import {
   classifyTicket,
+  deleteAgentSession,
   draftReply,
+  getAgentSession,
   getPlaybook,
   retrievePlaybooks,
   submitFeedback,
@@ -72,7 +74,10 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
   const ticketRef = useRef(ticket.key);
   ticketRef.current = ticket.key;
 
-  // Reset state whenever the ticket key changes.
+  // Reset state whenever the ticket key changes, then try to rehydrate any
+  // persisted workflow for this ticket (classification + retrieval + draft +
+  // edit + feedback_status). Missing fields stay null so the operator sees
+  // the right starting step (Classify button, retrieval list, etc.).
   useEffect(() => {
     setClassification(null);
     setClassifyError(null);
@@ -90,21 +95,58 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
     setFeedbackError(null);
     setFeedbackSubmitting(false);
     setSourcePlaybook(null);
+
+    let cancelled = false;
+    getAgentSession(ticket.key)
+      .then((session) => {
+        if (cancelled || !session) return;
+        if (session.classification) setClassification(session.classification);
+        if (session.retrieval) {
+          setRetrieval(session.retrieval);
+          if (session.draft_playbook_id) {
+            const idx = session.retrieval.hits.findIndex(
+              (h) => h.playbook_id === session.draft_playbook_id,
+            );
+            if (idx >= 0) setChosenIdx(idx);
+          }
+        }
+        if (session.draft) {
+          setDraft(session.draft);
+          setEditedText(session.edited_text ?? session.draft.draft);
+        }
+        if (
+          session.feedback_status === 'approved' ||
+          session.feedback_status === 'edited' ||
+          session.feedback_status === 'rejected'
+        ) {
+          setFeedbackStatus(session.feedback_status);
+        }
+      })
+      .catch(() => {
+        // No persisted session — fresh state is correct.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [ticket.key]);
 
   // Classification is manual — fired from the Classify button so the API isn't
-  // billed on every refresh / navigation.
+  // billed on every refresh / navigation. The backend persists the result
+  // under this ticket_id so a later reload restores the workflow.
   function handleClassify() {
     if (classifyLoading || classification) return;
     setClassifyLoading(true);
     setClassifyError(null);
     const myTicketKey = ticket.key;
-    classifyTicket({
-      summary: ticket.summary,
-      description: ticket.description,
-      reporter_email: ticket.reporter_email,
-      labels: ticket.labels,
-    })
+    classifyTicket(
+      {
+        summary: ticket.summary,
+        description: ticket.description,
+        reporter_email: ticket.reporter_email,
+        labels: ticket.labels,
+      },
+      myTicketKey,
+    )
       .then((res) => {
         if (ticketRef.current !== myTicketKey) return;
         setClassification(res);
@@ -124,12 +166,15 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
     if (retrieval || retrieveLoading || retrieveError) return;
     setRetrieveLoading(true);
     const myTicketKey = ticket.key;
-    retrievePlaybooks({
-      summary: ticket.summary,
-      description: ticket.description,
-      labels: ticket.labels,
-      top_k: 3,
-    })
+    retrievePlaybooks(
+      {
+        summary: ticket.summary,
+        description: ticket.description,
+        labels: ticket.labels,
+        top_k: 3,
+      },
+      myTicketKey,
+    )
       .then((res) => {
         if (ticketRef.current !== myTicketKey) return;
         setRetrieval(res);
@@ -174,11 +219,14 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
     setDraft(null);
     setShowDiff(false);
     const myTicketKey = ticket.key;
-    draftReply({
-      ticket_summary: ticket.summary,
-      ticket_description: ticket.description,
-      playbook_id: chosenHit.playbook_id,
-    })
+    draftReply(
+      {
+        ticket_summary: ticket.summary,
+        ticket_description: ticket.description,
+        playbook_id: chosenHit.playbook_id,
+      },
+      myTicketKey,
+    )
       .then((res) => {
         if (ticketRef.current !== myTicketKey) return;
         setDraft(res);
@@ -218,8 +266,14 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
     }
   }
 
-  function handleRedo() {
-    // Resetting via key — synthetic toggle via state.
+  async function handleRedo() {
+    // Wipe the persisted session so a refresh doesn't immediately rehydrate
+    // the old state we just discarded.
+    try {
+      await deleteAgentSession(ticket.key);
+    } catch {
+      // Non-blocking — local state still resets below.
+    }
     setClassification(null);
     setRetrieval(null);
     setChosenIdx(0);

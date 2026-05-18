@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from core import feedback as feedback_store
+from core import agent_sessions, feedback as feedback_store
 
 from ..schemas import FeedbackRecordOut, FeedbackRequest, FeedbackStats
 
@@ -25,6 +25,16 @@ def submit_feedback(req: FeedbackRequest) -> FeedbackRecordOut:
         final_text=req.final_text,
         status=req.status,  # type: ignore[arg-type]
     )
+    # Also flip the agent_session for this ticket so the Agent tab shows the
+    # final state on its next reload — best-effort, never blocks the response.
+    try:
+        agent_sessions.upsert_feedback(
+            ticket_id=req.ticket_id,
+            status=req.status,
+            edited_text=req.final_text,
+        )
+    except Exception:
+        pass
     records = feedback_store.list_feedback(ticket_id=req.ticket_id, limit=1)
     if not records or records[0].id != new_id:
         raise HTTPException(status_code=500, detail="Failed to read back feedback record")

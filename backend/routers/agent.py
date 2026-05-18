@@ -1,8 +1,9 @@
 """Agent endpoints: classify a ticket, retrieve matching playbooks, draft a reply."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from core import agent_sessions
 from core.classifier import classify_ticket
 from core.drafter import draft_reply
 from core.retrieval import (
@@ -16,6 +17,7 @@ from core.retrieval import (
 
 from ..deps import get_playbook_index, get_playbooks
 from ..schemas import (
+    AgentSessionDetail,
     ClassifyRequest,
     ClassifyResponse,
     DraftRequest,
@@ -54,7 +56,10 @@ def _hit_to_out(hit: RetrievalHit) -> RetrievalHitOut:
 
 
 @router.post("/classify", response_model=ClassifyResponse)
-def classify(req: ClassifyRequest) -> ClassifyResponse:
+def classify(
+    req: ClassifyRequest,
+    ticket_id: str | None = Query(default=None, description="Persist under this ticket_id"),
+) -> ClassifyResponse:
     try:
         result = classify_ticket(
             summary=req.summary,
@@ -64,17 +69,24 @@ def classify(req: ClassifyRequest) -> ClassifyResponse:
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Classifier failed: {exc}") from exc
-    return ClassifyResponse(
+    response = ClassifyResponse(
         label=result.label,
         confidence=result.confidence,
         reason=result.reason,
     )
+    if ticket_id:
+        try:
+            agent_sessions.upsert_classification(ticket_id, response.model_dump())
+        except Exception:
+            pass
+    return response
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
 def agent_retrieve(
     req: RetrieveRequest,
     request: Request,
+    ticket_id: str | None = Query(default=None, description="Persist under this ticket_id"),
 ) -> RetrieveResponse:
     index: PlaybookIndex = get_playbook_index(request)
     ticket_text = f"{req.summary}\n\n{req.description}".strip()
@@ -88,16 +100,23 @@ def agent_retrieve(
         ticket_class=req.ticket_class,
         top_k=req.top_k,
     )
-    return RetrieveResponse(
+    response = RetrieveResponse(
         hits=[_hit_to_out(h) for h in hits],
         detected_language=detect_language(ticket_text),
         detected_country=country_from_labels(req.labels),
     )
+    if ticket_id:
+        try:
+            agent_sessions.upsert_retrieval(ticket_id, response.model_dump())
+        except Exception:
+            pass
+    return response
 
 
 @router.post("/draft", response_model=DraftResponse)
 def agent_draft(
     req: DraftRequest,
+    ticket_id: str | None = Query(default=None, description="Persist under this ticket_id"),
     playbooks: list[Playbook] = Depends(get_playbooks),
 ) -> DraftResponse:
     playbook = next((pb for pb in playbooks if pb.id == req.playbook_id), None)
@@ -113,8 +132,43 @@ def agent_draft(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Drafter failed: {exc}") from exc
 
-    return DraftResponse(
+    response = DraftResponse(
         draft=result.draft,
         recommended_action=result.recommended_action,
         rationale=result.rationale,
     )
+    if ticket_id:
+        try:
+            agent_sessions.upsert_draft(ticket_id, req.playbook_id, response.model_dump())
+        except Exception:
+            pass
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Per-ticket workflow session (GET + DELETE for rehydration / redo)
+# ---------------------------------------------------------------------------
+def _record_to_detail(r: agent_sessions.AgentSessionRecord) -> AgentSessionDetail:
+    return AgentSessionDetail(
+        ticket_id=r.ticket_id,
+        classification=ClassifyResponse(**r.classification) if r.classification else None,
+        retrieval=RetrieveResponse(**r.retrieval) if r.retrieval else None,
+        draft=DraftResponse(**r.draft) if r.draft else None,
+        draft_playbook_id=r.draft_playbook_id,
+        edited_text=r.edited_text,
+        feedback_status=r.feedback_status,
+        updated_at=r.updated_at,
+    )
+
+
+@router.get("/sessions/{ticket_id}", response_model=AgentSessionDetail | None)
+def get_agent_session(ticket_id: str) -> AgentSessionDetail | None:
+    record = agent_sessions.get_session(ticket_id)
+    if record is None:
+        return None
+    return _record_to_detail(record)
+
+
+@router.delete("/sessions/{ticket_id}", status_code=204)
+def delete_agent_session(ticket_id: str) -> None:
+    agent_sessions.delete_session(ticket_id)

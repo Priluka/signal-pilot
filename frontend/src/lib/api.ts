@@ -6,6 +6,7 @@
  * with ``VITE_API_URL=https://api.example.com`` in ``.env.local``.
  */
 import type {
+  AgentSessionDetail,
   CategoriesResponse,
   ChatDeltaEvent,
   ChatDoneEvent,
@@ -93,25 +94,60 @@ export function getTicket(key: string): Promise<TicketDetail> {
 }
 
 // --- Agent -----------------------------------------------------------------
-export function classifyTicket(req: ClassifyRequest): Promise<ClassifyResponse> {
-  return json<ClassifyResponse>('/agent/classify', {
+function _withTicketQuery(path: string, ticketId?: string | null): string {
+  if (!ticketId) return path;
+  const sep = path.includes('?') ? '&' : '?';
+  return `${path}${sep}ticket_id=${encodeURIComponent(ticketId)}`;
+}
+
+export function classifyTicket(
+  req: ClassifyRequest,
+  ticketId?: string | null,
+): Promise<ClassifyResponse> {
+  return json<ClassifyResponse>(_withTicketQuery('/agent/classify', ticketId), {
     method: 'POST',
     body: JSON.stringify(req),
   });
 }
 
-export function retrievePlaybooks(req: RetrieveRequest): Promise<RetrieveResponse> {
-  return json<RetrieveResponse>('/agent/retrieve', {
+export function retrievePlaybooks(
+  req: RetrieveRequest,
+  ticketId?: string | null,
+): Promise<RetrieveResponse> {
+  return json<RetrieveResponse>(_withTicketQuery('/agent/retrieve', ticketId), {
     method: 'POST',
     body: JSON.stringify(req),
   });
 }
 
-export function draftReply(req: DraftRequest): Promise<DraftResponse> {
-  return json<DraftResponse>('/agent/draft', {
+export function draftReply(
+  req: DraftRequest,
+  ticketId?: string | null,
+): Promise<DraftResponse> {
+  return json<DraftResponse>(_withTicketQuery('/agent/draft', ticketId), {
     method: 'POST',
     body: JSON.stringify(req),
   });
+}
+
+export async function getAgentSession(
+  ticketId: string,
+): Promise<AgentSessionDetail | null> {
+  const res = await fetch(
+    `${API_BASE}/agent/sessions/${encodeURIComponent(ticketId)}`,
+    { headers: { 'Content-Type': 'application/json' } },
+  );
+  if (!res.ok) throw new Error(`${res.status} /agent/sessions/${ticketId}`);
+  const body = await res.json();
+  return body as AgentSessionDetail | null;
+}
+
+export async function deleteAgentSession(ticketId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/agent/sessions/${encodeURIComponent(ticketId)}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) throw new Error(`${res.status} delete /agent/sessions/${ticketId}`);
 }
 
 // --- Feedback --------------------------------------------------------------

@@ -210,6 +210,17 @@ class DraftResponse(BaseModel):
     rationale: str
 
 
+class AgentSessionDetail(BaseModel):
+    ticket_id: str
+    classification: ClassifyResponse | None = None
+    retrieval: RetrieveResponse | None = None
+    draft: DraftResponse | None = None
+    draft_playbook_id: str | None = None
+    edited_text: str | None = None
+    feedback_status: str | None = None
+    updated_at: str
+
+
 # --- Chat ------------------------------------------------------------------
 class ChatRequest(BaseModel):
     question: str

@@ -166,6 +166,17 @@ export interface DraftResponse {
   rationale: string;
 }
 
+export interface AgentSessionDetail {
+  ticket_id: string;
+  classification: ClassifyResponse | null;
+  retrieval: RetrieveResponse | null;
+  draft: DraftResponse | null;
+  draft_playbook_id: string | null;
+  edited_text: string | null;
+  feedback_status: 'approved' | 'edited' | 'rejected' | null;
+  updated_at: string;
+}
+
 export interface FeedbackRequest {
   ticket_id: string;
   playbook_id: string;
