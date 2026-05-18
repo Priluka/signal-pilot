@@ -6,8 +6,10 @@
  * with ``VITE_API_URL=https://api.example.com`` in ``.env.local``.
  */
 import type {
+  AgentMetrics,
   AgentSessionDetail,
   AgentSessionSummary,
+  BatchStatus,
   CategoriesResponse,
   ChatDeltaEvent,
   ChatDoneEvent,
@@ -145,6 +147,18 @@ export async function getAgentSession(
 
 export function listAgentSessions(): Promise<AgentSessionSummary[]> {
   return json<AgentSessionSummary[]>('/agent/sessions');
+}
+
+export function startAgentBatch(): Promise<BatchStatus> {
+  return json<BatchStatus>('/agent/batch-process', { method: 'POST' });
+}
+
+export function getAgentBatchStatus(): Promise<BatchStatus> {
+  return json<BatchStatus>('/agent/batch-status');
+}
+
+export function getAgentMetrics(): Promise<AgentMetrics> {
+  return json<AgentMetrics>('/agent/metrics');
 }
 
 export async function deleteAgentSession(ticketId: string): Promise<void> {

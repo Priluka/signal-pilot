@@ -166,6 +166,34 @@ export interface DraftResponse {
   rationale: string;
 }
 
+/** Single source of truth for an Agent Feed ticket's state. Mirrors the
+ * backend's ``derive_status`` so the frontend can render the same pill
+ * regardless of how the session reached that state. */
+export type AgentStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'skipped'
+  | 'auto_resolved'
+  | 'auto_drafted'
+  | 'needs_review'
+  | 'escalated'
+  | 'approved'
+  | 'rejected';
+
+export interface AgentSessionSummary {
+  ticket_id: string;
+  derived_status: AgentStatus;
+  classification_label: string | null;
+  classification_confidence: number | null;
+  draft_playbook_id: string | null;
+  draft_playbook_title: string | null;
+  recommended_action: string | null;
+  feedback_status: 'approved' | 'edited' | 'rejected' | null;
+  updated_at: string;
+  drafted_at: string | null;
+  feedback_at: string | null;
+}
+
 export interface AgentSessionDetail {
   ticket_id: string;
   classification: ClassifyResponse | null;
@@ -174,47 +202,39 @@ export interface AgentSessionDetail {
   draft_playbook_id: string | null;
   edited_text: string | null;
   feedback_status: 'approved' | 'edited' | 'rejected' | null;
+  derived_status: AgentStatus;
   updated_at: string;
+  started_at: string | null;
+  classified_at: string | null;
+  retrieved_at: string | null;
+  drafted_at: string | null;
+  feedback_at: string | null;
 }
 
-export interface AgentSessionSummary {
-  ticket_id: string;
-  has_classification: boolean;
-  classification_label: string | null;
-  has_retrieval: boolean;
-  has_draft: boolean;
-  feedback_status: 'approved' | 'edited' | 'rejected' | null;
-  updated_at: string;
+export interface BatchStatus {
+  running: boolean;
+  processed: number;
+  total: number;
+  started_at: string | null;
+  finished_at: string | null;
+  current_ticket: string | null;
+  errors: { ticket_id: string; step: string; message: string }[];
 }
 
-/** Derived workflow stage for the Agent Feed ticket list pill. */
-export type AgentWorkflowState =
-  | 'not_started'
-  | 'classified'
-  | 'retrieved'
-  | 'drafted'
-  | 'approved'
-  | 'edited'
-  | 'rejected'
-  | 'auto_close';
-
-export function agentWorkflowState(
-  s: AgentSessionSummary | undefined,
-): AgentWorkflowState {
-  if (!s) return 'not_started';
-  if (s.feedback_status === 'approved') return 'approved';
-  if (s.feedback_status === 'edited') return 'edited';
-  if (s.feedback_status === 'rejected') return 'rejected';
-  if (
-    s.classification_label === 'internal_log' ||
-    s.classification_label === 'spam_or_junk'
-  ) {
-    return 'auto_close';
-  }
-  if (s.has_draft) return 'drafted';
-  if (s.has_retrieval) return 'retrieved';
-  if (s.has_classification) return 'classified';
-  return 'not_started';
+export interface AgentMetrics {
+  total: number;
+  processed: number;
+  needs_review: number;
+  auto_drafted: number;
+  auto_resolved: number;
+  escalated: number;
+  skipped: number;
+  approved: number;
+  rejected: number;
+  in_progress: number;
+  pending: number;
+  approval_rate: number;
+  avg_confidence: number;
 }
 
 export interface FeedbackRequest {
