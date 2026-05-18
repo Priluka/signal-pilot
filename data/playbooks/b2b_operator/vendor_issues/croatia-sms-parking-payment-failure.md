@@ -144,7 +144,7 @@ B2B partners (parking operators, airports, venues) in Croatia report recurring f
 
 ## Typical resolution flow
 
-1. oov je samo test
+1. oov je samo testB2B partner (parking operator or intermediary) submits ticket reporting SMS payment not working
 2. Bmove support checks system logs and connectivity to Hostcom or operator network
 3. Support identifies root cause: lost HC connection, operator-side issue, or system downtime
 4. Support restarts relevant service or process, or waits for upstream vendor to restore
