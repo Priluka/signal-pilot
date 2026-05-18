@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 
-import { getCategories, getSuggestionStats } from '../lib/api';
+import { getAgentMetrics, getCategories, getSuggestionStats } from '../lib/api';
 import { useChatStore } from '../lib/chatStore';
 
 
@@ -104,7 +104,8 @@ function DisabledRow({ label, hint }: { label: string; hint: string }) {
 
 export function Sidebar() {
   const [playbooksCount, setPlaybooksCount] = useState<number | undefined>(undefined);
-  const [pendingCount, setPendingCount] = useState<number | undefined>(undefined);
+  const [suggestionsPending, setSuggestionsPending] = useState<number | undefined>(undefined);
+  const [inboxCount, setInboxCount] = useState<number | undefined>(undefined);
 
   const refreshPlaybooks = useCallback(() => {
     getCategories()
@@ -114,17 +115,29 @@ export function Sidebar() {
 
   const refreshSuggestions = useCallback(() => {
     getSuggestionStats()
-      .then((stats) => setPendingCount(stats.pending))
-      .catch(() => setPendingCount(undefined));
+      .then((stats) => setSuggestionsPending(stats.pending))
+      .catch(() => setSuggestionsPending(undefined));
+  }, []);
+
+  const refreshInbox = useCallback(() => {
+    getAgentMetrics()
+      .then((m) => setInboxCount(m.needs_review + m.escalated))
+      .catch(() => setInboxCount(undefined));
   }, []);
 
   useEffect(() => {
     refreshPlaybooks();
     refreshSuggestions();
-    const handler = () => refreshSuggestions();
-    window.addEventListener('suggestions-changed', handler);
-    return () => window.removeEventListener('suggestions-changed', handler);
-  }, [refreshPlaybooks, refreshSuggestions]);
+    refreshInbox();
+    const suggHandler = () => refreshSuggestions();
+    const agentHandler = () => refreshInbox();
+    window.addEventListener('suggestions-changed', suggHandler);
+    window.addEventListener('agent-sessions-changed', agentHandler);
+    return () => {
+      window.removeEventListener('suggestions-changed', suggHandler);
+      window.removeEventListener('agent-sessions-changed', agentHandler);
+    };
+  }, [refreshPlaybooks, refreshSuggestions, refreshInbox]);
 
   return (
     <aside className="flex flex-col w-64 shrink-0 bg-sidebar-bg border-r border-sidebar-border text-sidebar-text">
@@ -140,8 +153,9 @@ export function Sidebar() {
       <nav className="flex-1 overflow-y-auto scrollbar-thin py-2 space-y-0.5">
         <NavRow to="/knowledge" label="Playbooks" count={playbooksCount} />
         <ChatNavRow />
-        <NavRow to="/agent" label="Agent Feed" />
-        <NavRow to="/suggestions" label="Suggestions" count={pendingCount} badge />
+        <NavRow to="/inbox" label="Inbox" count={inboxCount} badge />
+        <NavRow to="/activity-log" label="Activity Log" />
+        <NavRow to="/suggestions" label="Suggestions" count={suggestionsPending} badge />
       </nav>
 
       <div className="border-t border-sidebar-border py-2">

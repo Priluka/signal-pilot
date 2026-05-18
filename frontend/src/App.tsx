@@ -1,10 +1,11 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 
 import { Layout } from './components/Layout';
-import { AgentPage } from './pages/AgentPage';
+import { ActivityLogPage } from './pages/ActivityLogPage';
 import { ChatPage } from './pages/ChatPage';
 import { ComingSoonPage } from './pages/ComingSoonPage';
 import { GraphPage } from './pages/GraphPage';
+import { InboxPage } from './pages/InboxPage';
 import { KnowledgePage } from './pages/KnowledgePage';
 import { SuggestionsPage } from './pages/SuggestionsPage';
 
@@ -19,8 +20,13 @@ function App() {
           <Route path="/knowledge/:slug" element={<KnowledgePage />} />
           <Route path="/graph" element={<GraphPage />} />
           <Route path="/chat" element={<ChatPage />} />
-          <Route path="/agent" element={<AgentPage />} />
-          <Route path="/agent/:ticketKey" element={<AgentPage />} />
+          <Route path="/inbox" element={<InboxPage />} />
+          <Route path="/inbox/:ticketKey" element={<InboxPage />} />
+          <Route path="/activity-log" element={<ActivityLogPage />} />
+          <Route path="/activity-log/:ticketKey" element={<ActivityLogPage />} />
+          {/* Old /agent routes redirect to the new Inbox. */}
+          <Route path="/agent" element={<Navigate to="/inbox" replace />} />
+          <Route path="/agent/:ticketKey" element={<Navigate to="/inbox" replace />} />
           <Route path="/suggestions" element={<SuggestionsPage />} />
           <Route
             path="/agents/deployed"
