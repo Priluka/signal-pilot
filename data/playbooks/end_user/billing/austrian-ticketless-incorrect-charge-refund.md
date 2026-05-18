@@ -153,7 +153,6 @@ Austrian end-users registered in the Bmove Ticketless system are automatically c
 - Vehicle plate still registered in a former owner's or family member's Bmove account
 - Customer purchases a weekly/permanent garage card but forgets to remove vehicle from Bmove app, resulting in a duplicate charge
 - Barrier fails to open, customer draws a paid ticket, then Ticketless also charges the session
-- hehe one mroe thing
 
 ## Typical resolution flow
 
