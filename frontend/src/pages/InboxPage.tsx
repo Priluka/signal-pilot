@@ -64,7 +64,10 @@ export function InboxPage() {
     }
   }, []);
 
-  // Load tickets once + kick off batch + poll status.
+  // Track batch progress (poll only while it's actively running) and refresh
+  // sessions+metrics on demand or on agent-sessions-changed events. The batch
+  // is NOT auto-started on mount — the operator triggers it explicitly so
+  // background work is bounded.
   useEffect(() => {
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -81,7 +84,9 @@ export function InboxPage() {
         if (!cancelled) setTicketsLoading(false);
       });
 
-    startAgentBatch()
+    // One-shot read of batch status so we can show the right CTA / progress
+    // bar without starting anything.
+    getAgentBatchStatus()
       .then((b) => {
         if (cancelled) return;
         setBatch(b);
@@ -114,6 +119,15 @@ export function InboxPage() {
       if (intervalId) clearInterval(intervalId);
     };
   }, [refresh]);
+
+  async function triggerBatch() {
+    try {
+      const b = await startAgentBatch();
+      setBatch(b);
+    } catch {
+      /* ignored */
+    }
+  }
 
   useEffect(() => {
     if (!ticketKey) {
@@ -202,7 +216,7 @@ export function InboxPage() {
             />
           </div>
         </div>
-        {batch?.running && (
+        {batch?.running ? (
           <div className="flex items-center gap-2 text-[11px] text-blue-700">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
             Processing tickets… {batch.processed} / {batch.total}
@@ -210,7 +224,20 @@ export function InboxPage() {
               <span className="font-mono text-slate-500">{batch.current_ticket}</span>
             )}
           </div>
-        )}
+        ) : metrics && metrics.processed < metrics.total ? (
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className="text-slate-500">
+              {metrics.total - metrics.processed} ticket{metrics.total - metrics.processed === 1 ? '' : 's'} not yet processed by the agent.
+            </span>
+            <button
+              type="button"
+              onClick={triggerBatch}
+              className="px-2.5 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
+            >
+              Process pending tickets
+            </button>
+          </div>
+        ) : null}
       </header>
       <div className="flex-1 flex overflow-hidden">
         {!initialLoaded || ticketsLoading ? (

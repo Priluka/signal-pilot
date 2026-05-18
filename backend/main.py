@@ -49,13 +49,22 @@ def _load_ticket_sample(path: Path) -> list[dict]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Bump anyio's default thread pool well above the 40-thread default.
+    # Every sync FastAPI endpoint + every asyncio.to_thread call shares
+    # this pool; 40 was too tight when the Agent Feed runs multiple
+    # polling streams alongside the batch thread + SSE tails. With 200
+    # the backend stays responsive even under aggressive concurrent use.
+    from anyio import to_thread
+
+    to_thread.current_default_thread_limiter().total_tokens = 200
+
     paths = discover_playbook_paths(config.PLAYBOOKS_DIR)
     app.state.playbooks = [load_playbook(p) for p in paths]
     app.state.tickets = _load_ticket_sample(config.TICKET_SAMPLE_FILE)
+
     # Build the embedding index eagerly so the first burst of frontend
-    # requests doesn't race to build it and exhaust the worker thread pool.
-    # Cached .npz means this is near-instant on every restart after the
-    # first one.
+    # requests doesn't race to build it. Cached .npz on disk makes this
+    # near-instant after the first run.
     from core.retrieval import build_index
 
     app.state.index = build_index()

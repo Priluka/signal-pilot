@@ -17,7 +17,6 @@ import {
   getTicket,
   listAgentActivity,
   listAgentSessions,
-  startAgentBatch,
 } from '../lib/api';
 import type {
   AgentActivityEvent,
@@ -88,7 +87,9 @@ export function ActivityLogPage() {
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
-    startAgentBatch()
+    // Read-only: we never start a batch from the Activity Log — only the
+    // Inbox triggers processing. Here we just show what's already happened.
+    getAgentBatchStatus()
       .then((b) => {
         if (cancelled) return;
         setBatch(b);

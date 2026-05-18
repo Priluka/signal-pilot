@@ -133,25 +133,29 @@ def _ensure_thread_for(
 # SSE tail (reads from DB, yields events)
 # ---------------------------------------------------------------------------
 async def _sse_tail(session_id: int) -> AsyncIterator[str]:
-    """Yield SSE events by tailing the row. Ends when status is done/error."""
-    session = chat_history.get_session(session_id)
+    """Yield SSE events by tailing the row. Ends when status is done/error.
+
+    Every sync SQLite read is wrapped in ``asyncio.to_thread`` so the
+    event loop is never blocked while waiting on disk I/O — without that
+    wrapper, a dozen open SSE tails would chain serial sync calls through
+    the same coroutine and stall every other request the asyncio loop
+    was supposed to dispatch (uvicorn becomes 'SN' / 0% CPU and only
+    OPTIONS preflights answer).
+    """
+    session = await asyncio.to_thread(chat_history.get_session, session_id)
     if session is None:
         yield _sse("error", {"message": f"session {session_id} not found"})
         return
 
-    # First event: sources + session_id.
     yield _sse(
         "sources",
         {"hits": session.hits, "session_id": session.id},
     )
 
     last_pos = len(session.answer)
-    # If the row already has content (e.g. re-attach after refresh), replay it
-    # so the client can rebuild full state.
     if last_pos > 0:
         yield _sse("delta", {"text": session.answer})
 
-    # Terminal already?
     if session.status == "done":
         yield _sse(
             "done",
@@ -169,10 +173,9 @@ async def _sse_tail(session_id: int) -> AsyncIterator[str]:
         )
         return
 
-    # Otherwise poll until terminal.
     while True:
         await asyncio.sleep(_TAIL_POLL_INTERVAL)
-        current = chat_history.get_session(session_id)
+        current = await asyncio.to_thread(chat_history.get_session, session_id)
         if current is None:
             yield _sse("error", {"message": f"session {session_id} disappeared"})
             return
