@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from core import agent_sessions
+from core import agent_runner, agent_sessions
 from core.classifier import classify_ticket
 from core.drafter import draft_reply
 from core.retrieval import (
@@ -15,10 +15,12 @@ from core.retrieval import (
     retrieve,
 )
 
-from ..deps import get_playbook_index, get_playbooks
+from ..deps import get_playbook_index, get_playbooks, get_tickets
 from ..schemas import (
+    AgentMetrics,
     AgentSessionDetail,
     AgentSessionSummary,
+    BatchStatus,
     ClassifyRequest,
     ClassifyResponse,
     DraftRequest,
@@ -158,26 +160,108 @@ def _record_to_detail(r: agent_sessions.AgentSessionRecord) -> AgentSessionDetai
         draft_playbook_id=r.draft_playbook_id,
         edited_text=r.edited_text,
         feedback_status=r.feedback_status,
+        derived_status=agent_sessions.derive_status(r),
         updated_at=r.updated_at,
+        started_at=r.started_at,
+        classified_at=r.classified_at,
+        retrieved_at=r.retrieved_at,
+        drafted_at=r.drafted_at,
+        feedback_at=r.feedback_at,
+    )
+
+
+def _record_to_summary(
+    r: agent_sessions.AgentSessionRecord,
+    playbook_title_by_id: dict[str, str],
+) -> AgentSessionSummary:
+    classification = r.classification or {}
+    draft = r.draft or {}
+    return AgentSessionSummary(
+        ticket_id=r.ticket_id,
+        derived_status=agent_sessions.derive_status(r),
+        classification_label=classification.get("label"),
+        classification_confidence=classification.get("confidence"),
+        draft_playbook_id=r.draft_playbook_id,
+        draft_playbook_title=(
+            playbook_title_by_id.get(r.draft_playbook_id)
+            if r.draft_playbook_id
+            else None
+        ),
+        recommended_action=draft.get("recommended_action"),
+        feedback_status=r.feedback_status,
+        updated_at=r.updated_at,
+        drafted_at=r.drafted_at,
+        feedback_at=r.feedback_at,
     )
 
 
 @router.get("/sessions", response_model=list[AgentSessionSummary])
-def list_agent_sessions() -> list[AgentSessionSummary]:
+def list_agent_sessions(
+    playbooks: list[Playbook] = Depends(get_playbooks),
+) -> list[AgentSessionSummary]:
+    titles = {pb.id: pb.title for pb in playbooks}
     return [
-        AgentSessionSummary(
-            ticket_id=r.ticket_id,
-            has_classification=r.classification is not None,
-            classification_label=(
-                r.classification.get("label") if r.classification else None
-            ),
-            has_retrieval=r.retrieval is not None,
-            has_draft=r.draft is not None,
-            feedback_status=r.feedback_status,
-            updated_at=r.updated_at,
-        )
+        _record_to_summary(r, titles)
         for r in agent_sessions.list_sessions()
     ]
+
+
+# ---------------------------------------------------------------------------
+# Batch processing (auto-fill the inbox in the background)
+# ---------------------------------------------------------------------------
+@router.post("/batch-process", response_model=BatchStatus)
+def batch_process(
+    request: Request,
+    tickets: list[dict] = Depends(get_tickets),
+    playbooks: list[Playbook] = Depends(get_playbooks),
+) -> BatchStatus:
+    index = get_playbook_index(request)
+    state = agent_runner.start_batch(tickets, playbooks, index)
+    return BatchStatus(**state)
+
+
+@router.get("/batch-status", response_model=BatchStatus)
+def batch_status() -> BatchStatus:
+    return BatchStatus(**agent_runner.get_batch_status())
+
+
+@router.get("/metrics", response_model=AgentMetrics)
+def metrics(
+    tickets: list[dict] = Depends(get_tickets),
+) -> AgentMetrics:
+    sessions = agent_sessions.list_sessions()
+    counts = {
+        "needs_review": 0,
+        "auto_drafted": 0,
+        "auto_resolved": 0,
+        "escalated": 0,
+        "skipped": 0,
+        "approved": 0,
+        "rejected": 0,
+        "in_progress": 0,
+        "pending": 0,
+    }
+    confidences: list[float] = []
+    for s in sessions:
+        st = agent_sessions.derive_status(s)
+        if st in counts:
+            counts[st] += 1
+        if s.classification and "confidence" in s.classification:
+            try:
+                confidences.append(float(s.classification["confidence"]))
+            except (TypeError, ValueError):
+                pass
+
+    approved_total = counts["approved"] + counts["rejected"]
+    approval_rate = counts["approved"] / approved_total if approved_total else 0.0
+    avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+    return AgentMetrics(
+        total=len(tickets),
+        processed=len(sessions),
+        **counts,
+        approval_rate=approval_rate,
+        avg_confidence=avg_conf,
+    )
 
 
 @router.get("/sessions/{ticket_id}", response_model=AgentSessionDetail | None)

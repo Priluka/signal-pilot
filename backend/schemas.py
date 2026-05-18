@@ -218,19 +218,55 @@ class AgentSessionDetail(BaseModel):
     draft_playbook_id: str | None = None
     edited_text: str | None = None
     feedback_status: str | None = None
+    derived_status: str = "pending"
     updated_at: str
+    started_at: str | None = None
+    classified_at: str | None = None
+    retrieved_at: str | None = None
+    drafted_at: str | None = None
+    feedback_at: str | None = None
 
 
 class AgentSessionSummary(BaseModel):
-    """Compact per-ticket workflow state for the Agent Feed ticket list pill."""
+    """Compact per-ticket workflow state for the Agent Feed inbox list."""
 
     ticket_id: str
-    has_classification: bool
+    derived_status: str
     classification_label: str | None = None
-    has_retrieval: bool
-    has_draft: bool
+    classification_confidence: float | None = None
+    draft_playbook_id: str | None = None
+    draft_playbook_title: str | None = None
+    recommended_action: str | None = None
     feedback_status: str | None = None
     updated_at: str
+    drafted_at: str | None = None
+    feedback_at: str | None = None
+
+
+class BatchStatus(BaseModel):
+    running: bool
+    processed: int
+    total: int
+    started_at: str | None = None
+    finished_at: str | None = None
+    current_ticket: str | None = None
+    errors: list[dict[str, str]] = Field(default_factory=list)
+
+
+class AgentMetrics(BaseModel):
+    total: int
+    processed: int
+    needs_review: int = 0
+    auto_drafted: int = 0
+    auto_resolved: int = 0
+    escalated: int = 0
+    skipped: int = 0
+    approved: int = 0
+    rejected: int = 0
+    in_progress: int = 0
+    pending: int = 0
+    approval_rate: float = 0.0
+    avg_confidence: float = 0.0
 
 
 # --- Chat ------------------------------------------------------------------
