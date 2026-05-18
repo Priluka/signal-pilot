@@ -1,120 +1,60 @@
 /** Chat tab — left history sidebar + free-form Q&A on the right.
  *
- * Every completed stream is persisted to chat_sessions, surfaced in the
- * sidebar, and reloadable by clicking. The 'chat-sessions-changed' window
- * event lets the sidebar refresh itself after a new session lands or a
- * delete.
+ * All streaming + answer + sources state lives in <ChatStoreProvider> at the
+ * app root, so navigating away does NOT abort the in-flight stream. The
+ * answer keeps growing on the server, persists on done, and is here when
+ * the operator comes back.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import { ChatAnswer, buildCitationMap } from '../components/ChatAnswer';
 import { ChatHistorySidebar } from '../components/ChatHistorySidebar';
 import { SourceCard } from '../components/SourceCard';
-import { useToast } from '../components/Toast';
-import { getChatSession, streamChatAnswer } from '../lib/api';
-import type { RetrievalHitOut } from '../lib/types';
-
-
-type Status = 'idle' | 'streaming' | 'done' | 'error';
+import { useChatStore } from '../lib/chatStore';
 
 
 export function ChatPage() {
-  const toast = useToast();
-
-  const [question, setQuestion] = useState('');
-  const [topK, setTopK] = useState(3);
-
-  const [status, setStatus] = useState<Status>('idle');
-  const [askedQuestion, setAskedQuestion] = useState('');
-  const [sources, setSources] = useState<RetrievalHitOut[]>([]);
-  const [answer, setAnswer] = useState('');
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
-
-  const abortRef = useRef<AbortController | null>(null);
+  const chat = useChatStore();
   const answerScrollRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
-
+  // Auto-scroll the answer panel as new text streams in.
   useEffect(() => {
-    if (status === 'streaming' && answerScrollRef.current) {
+    if (chat.status === 'streaming' && answerScrollRef.current) {
       answerScrollRef.current.scrollIntoView({ block: 'end', behavior: 'smooth' });
     }
-  }, [answer, status]);
+  }, [chat.answer, chat.status]);
 
-  function handleSubmit(e?: React.FormEvent) {
-    e?.preventDefault();
-    const q = question.trim();
-    if (!q || status === 'streaming') return;
-
-    abortRef.current?.abort();
-    setAskedQuestion(q);
-    setSources([]);
-    setAnswer('');
-    setErrorMsg(null);
-    setActiveSessionId(null);
-    setStatus('streaming');
-
-    abortRef.current = streamChatAnswer(q, topK, {
-      onSources: (e) => setSources(e.hits),
-      onDelta: (e) => setAnswer((prev) => prev + e.text),
-      onDone: (e) => {
-        setAnswer(e.answer);
-        setActiveSessionId(e.session_id);
-        setStatus('done');
-        // Sidebar re-fetches its list on this event.
-        window.dispatchEvent(new Event('chat-sessions-changed'));
-      },
-      onError: (e) => {
-        setErrorMsg(e.message);
-        setStatus('error');
-      },
-    });
-  }
-
-  function startNewChat() {
-    abortRef.current?.abort();
-    setQuestion('');
-    setAskedQuestion('');
-    setSources([]);
-    setAnswer('');
-    setErrorMsg(null);
-    setActiveSessionId(null);
-    setStatus('idle');
-  }
-
-  async function loadSession(id: number) {
-    abortRef.current?.abort();
-    try {
-      const s = await getChatSession(id);
-      setQuestion('');
-      setAskedQuestion(s.question);
-      setAnswer(s.answer);
-      setSources(s.hits);
-      setTopK(s.top_k);
-      setActiveSessionId(s.id);
-      setStatus('done');
-      setErrorMsg(null);
-    } catch (err) {
-      toast.error((err as Error).message);
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      chat.ask();
     }
   }
 
-  const citations = useMemo(() => buildCitationMap(answer, sources), [answer, sources]);
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    chat.ask();
+  }
+
+  const citations = useMemo(
+    () => buildCitationMap(chat.answer, chat.sources),
+    [chat.answer, chat.sources],
+  );
   const orderedSources = useMemo(() => {
-    return [...sources].sort((a, b) => {
+    return [...chat.sources].sort((a, b) => {
       const na = citations.get(a.playbook_id)?.number ?? 999;
       const nb = citations.get(b.playbook_id)?.number ?? 999;
       return na - nb;
     });
-  }, [sources, citations]);
+  }, [chat.sources, citations]);
+
+  const isStreaming = chat.status === 'streaming';
 
   return (
     <div className="h-full flex">
       <ChatHistorySidebar
-        activeId={activeSessionId}
-        onSelect={loadSession}
-        onNewChat={startNewChat}
+        activeId={chat.activeSessionId}
+        onSelect={chat.loadSession}
+        onNewChat={chat.clear}
       />
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         <div className="max-w-4xl mx-auto px-8 py-8 space-y-6">
@@ -128,21 +68,18 @@ export function ChatPage() {
             <span className="text-[11px] font-mono text-slate-400">Sonnet 4.6</span>
           </div>
 
-          {/* Question form */}
           <form
-            onSubmit={handleSubmit}
+            onSubmit={onSubmit}
             className="bg-panel-surface border border-panel-border rounded-lg p-4"
           >
             <textarea
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit();
-              }}
+              value={chat.question}
+              onChange={(e) => chat.setQuestion(e.target.value)}
+              onKeyDown={onKeyDown}
               rows={3}
               placeholder="e.g. What do I tell a Croatian customer who got a parking fine despite paying via the app?"
               className="w-full px-3 py-2 text-sm border border-slate-200 rounded focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 resize-y"
-              disabled={status === 'streaming'}
+              disabled={isStreaming}
             />
             <div className="mt-3 flex items-center justify-between">
               <label className="text-xs text-slate-500 flex items-center gap-2">
@@ -151,72 +88,73 @@ export function ChatPage() {
                   type="number"
                   min={1}
                   max={5}
-                  value={topK}
-                  onChange={(e) => setTopK(Math.max(1, Math.min(5, Number(e.target.value))))}
+                  value={chat.topK}
+                  onChange={(e) => chat.setTopK(Math.max(1, Math.min(5, Number(e.target.value))))}
                   className="w-12 px-1.5 py-0.5 text-xs border border-slate-200 rounded font-mono tabular-nums"
                 />
                 <span className="text-[11px] text-slate-400">playbooks consulted</span>
               </label>
               <div className="flex items-center gap-2">
-                {(status === 'done' || status === 'error' || askedQuestion) && (
+                {(chat.status === 'done' || chat.status === 'error' || chat.askedQuestion) && (
                   <button
                     type="button"
-                    onClick={startNewChat}
+                    onClick={chat.clear}
                     className="px-3 py-1.5 text-sm border border-slate-200 text-slate-700 rounded hover:bg-slate-50"
-                    disabled={status === 'streaming'}
                   >
-                    Clear
+                    {isStreaming ? 'Cancel' : 'Clear'}
                   </button>
                 )}
                 <button
                   type="submit"
-                  disabled={!question.trim() || status === 'streaming'}
+                  disabled={!chat.question.trim() || isStreaming}
                   className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
                 >
-                  {status === 'streaming' ? 'Thinking…' : 'Ask'}
+                  {isStreaming ? 'Thinking…' : 'Ask'}
                 </button>
               </div>
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">Cmd/Ctrl + Enter to submit</p>
+            <p className="mt-2 text-[11px] text-slate-400">
+              Cmd/Ctrl + Enter to submit. Stream keeps running even if you navigate away.
+            </p>
           </form>
 
-          {askedQuestion && (
+          {chat.askedQuestion && (
             <section>
               <header className="mb-2 flex items-center justify-between">
                 <h2 className="text-[11px] font-semibold tracking-wider uppercase text-slate-500">
                   Answer
                 </h2>
                 <div className="text-[11px] text-slate-400">
-                  grounded in {sources.length || topK} playbook{sources.length === 1 ? '' : 's'}
+                  grounded in {chat.sources.length || chat.topK} playbook{chat.sources.length === 1 ? '' : 's'}
                   {' · asked: '}
-                  <em className="text-slate-500">{askedQuestion}</em>
+                  <em className="text-slate-500">{chat.askedQuestion}</em>
                 </div>
               </header>
               <div className="bg-panel-surface border border-panel-border rounded-lg p-5">
-                {answer ? (
-                  <ChatAnswer text={answer} citations={citations} />
-                ) : status === 'streaming' ? (
+                {chat.answer ? (
+                  <ChatAnswer text={chat.answer} citations={citations} />
+                ) : isStreaming ? (
                   <div className="text-sm text-slate-400 flex items-center gap-2">
                     <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                     Retrieving and drafting…
                   </div>
                 ) : null}
-                {status === 'error' && (
-                  <div className="mt-3 text-sm text-red-600">{errorMsg}</div>
+                {chat.status === 'error' && (
+                  <div className="mt-3 text-sm text-red-600">{chat.errorMsg}</div>
                 )}
                 <div ref={answerScrollRef} />
               </div>
             </section>
           )}
 
-          {sources.length > 0 && (
+          {chat.sources.length > 0 && (
             <section>
               <header className="mb-2 flex items-center justify-between">
                 <h2 className="text-[11px] font-semibold tracking-wider uppercase text-slate-500">
                   Sources
                 </h2>
-                {status === 'done' &&
-                  Array.from(citations.values()).every((c) => c.number > sources.length) && (
+                {chat.status === 'done' &&
+                  Array.from(citations.values()).every((c) => c.number > chat.sources.length) && (
                     <span className="text-[11px] text-amber-600">
                       No inline citations detected — answer may be ungrounded.
                     </span>
@@ -231,7 +169,7 @@ export function ChatPage() {
             </section>
           )}
 
-          {!askedQuestion && (
+          {!chat.askedQuestion && (
             <div className="text-center text-sm text-slate-400 py-8">
               Try asking about a parking-fine dispute, a payment failure, a missing invoice, …
               Past chats appear on the left.

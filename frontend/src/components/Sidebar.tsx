@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 
 import { getCategories, getSuggestionStats } from '../lib/api';
+import { useChatStore } from '../lib/chatStore';
 
 
 interface CountedNavRowProps {
@@ -47,6 +48,41 @@ function NavRow({ to, label, count, badge }: CountedNavRowProps) {
         ) : (
           <span className="text-xs text-sidebar-muted font-mono tabular-nums">{count}</span>
         )
+      )}
+    </NavLink>
+  );
+}
+
+
+/** Special Chat row that shows a pulsing dot when a stream is in flight,
+ * even from another route — so the operator knows their question is still
+ * cooking even after navigating away. */
+function ChatNavRow() {
+  const { status } = useChatStore();
+  const streaming = status === 'streaming';
+  return (
+    <NavLink
+      to="/chat"
+      className={({ isActive }) =>
+        [
+          'flex items-center justify-between px-3 py-2 mx-2 rounded-md text-sm transition-colors',
+          isActive
+            ? 'bg-sidebar-surface text-sidebar-textActive'
+            : 'text-sidebar-text hover:bg-sidebar-surface/60 hover:text-sidebar-textActive',
+        ].join(' ')
+      }
+    >
+      <span className="flex items-center gap-2">
+        Chat
+        {streaming && (
+          <span
+            title="Streaming…"
+            className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"
+          />
+        )}
+      </span>
+      {streaming && (
+        <span className="text-[10px] uppercase tracking-wider text-blue-400">live</span>
       )}
     </NavLink>
   );
@@ -103,7 +139,7 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto scrollbar-thin py-2 space-y-0.5">
         <NavRow to="/knowledge" label="Playbooks" count={playbooksCount} />
-        <NavRow to="/chat" label="Chat" />
+        <ChatNavRow />
         <NavRow to="/agent" label="Agent Feed" />
         <NavRow to="/suggestions" label="Suggestions" count={pendingCount} badge />
       </nav>
