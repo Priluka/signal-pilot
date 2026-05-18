@@ -216,6 +216,21 @@ class ChatRequest(BaseModel):
     top_k: int = 3
 
 
+class ChatSessionSummary(BaseModel):
+    id: int
+    question: str
+    top_k: int
+    timestamp: str
+    source_count: int = 0
+    citation_count: int = 0
+
+
+class ChatSessionDetail(ChatSessionSummary):
+    answer: str
+    hits: list[RetrievalHitOut] = Field(default_factory=list)
+    cited_ids: list[str] = Field(default_factory=list)
+
+
 # --- Feedback --------------------------------------------------------------
 class FeedbackRequest(BaseModel):
     ticket_id: str

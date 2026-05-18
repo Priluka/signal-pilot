@@ -1,9 +1,17 @@
-/** Chat tab — free-form question → streamed Claude answer over top-k playbooks. */
+/** Chat tab — left history sidebar + free-form Q&A on the right.
+ *
+ * Every completed stream is persisted to chat_sessions, surfaced in the
+ * sidebar, and reloadable by clicking. The 'chat-sessions-changed' window
+ * event lets the sidebar refresh itself after a new session lands or a
+ * delete.
+ */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ChatAnswer, buildCitationMap } from '../components/ChatAnswer';
+import { ChatHistorySidebar } from '../components/ChatHistorySidebar';
 import { SourceCard } from '../components/SourceCard';
-import { streamChatAnswer } from '../lib/api';
+import { useToast } from '../components/Toast';
+import { getChatSession, streamChatAnswer } from '../lib/api';
 import type { RetrievalHitOut } from '../lib/types';
 
 
@@ -11,6 +19,8 @@ type Status = 'idle' | 'streaming' | 'done' | 'error';
 
 
 export function ChatPage() {
+  const toast = useToast();
+
   const [question, setQuestion] = useState('');
   const [topK, setTopK] = useState(3);
 
@@ -19,14 +29,13 @@ export function ChatPage() {
   const [sources, setSources] = useState<RetrievalHitOut[]>([]);
   const [answer, setAnswer] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const answerScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Cancel any in-flight stream when the user leaves the page.
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  // Auto-scroll the answer panel as text streams in.
   useEffect(() => {
     if (status === 'streaming' && answerScrollRef.current) {
       answerScrollRef.current.scrollIntoView({ block: 'end', behavior: 'smooth' });
@@ -43,6 +52,7 @@ export function ChatPage() {
     setSources([]);
     setAnswer('');
     setErrorMsg(null);
+    setActiveSessionId(null);
     setStatus('streaming');
 
     abortRef.current = streamChatAnswer(q, topK, {
@@ -50,7 +60,10 @@ export function ChatPage() {
       onDelta: (e) => setAnswer((prev) => prev + e.text),
       onDone: (e) => {
         setAnswer(e.answer);
+        setActiveSessionId(e.session_id);
         setStatus('done');
+        // Sidebar re-fetches its list on this event.
+        window.dispatchEvent(new Event('chat-sessions-changed'));
       },
       onError: (e) => {
         setErrorMsg(e.message);
@@ -59,18 +72,34 @@ export function ChatPage() {
     });
   }
 
-  function handleClear() {
+  function startNewChat() {
     abortRef.current?.abort();
     setQuestion('');
     setAskedQuestion('');
     setSources([]);
     setAnswer('');
     setErrorMsg(null);
+    setActiveSessionId(null);
     setStatus('idle');
   }
 
-  // Citation map (id → {number, title}) rebuilt as the answer grows.
-  // Sources are rendered ordered by the assigned footnote number.
+  async function loadSession(id: number) {
+    abortRef.current?.abort();
+    try {
+      const s = await getChatSession(id);
+      setQuestion('');
+      setAskedQuestion(s.question);
+      setAnswer(s.answer);
+      setSources(s.hits);
+      setTopK(s.top_k);
+      setActiveSessionId(s.id);
+      setStatus('done');
+      setErrorMsg(null);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }
+
   const citations = useMemo(() => buildCitationMap(answer, sources), [answer, sources]);
   const orderedSources = useMemo(() => {
     return [...sources].sort((a, b) => {
@@ -81,129 +110,134 @@ export function ChatPage() {
   }, [sources, citations]);
 
   return (
-    <div className="h-full overflow-y-auto scrollbar-thin">
-      <div className="max-w-4xl mx-auto px-8 py-8 space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Chat</h1>
-            <p className="text-sm text-slate-500 mt-0.5">
-              Ask a free-form question — the answer is grounded in the top-k retrieved playbooks and cites them inline.
-            </p>
-          </div>
-          <span className="text-[11px] font-mono text-slate-400">Sonnet 4.6</span>
-        </div>
-
-        {/* Question form */}
-        <form
-          onSubmit={handleSubmit}
-          className="bg-panel-surface border border-panel-border rounded-lg p-4"
-        >
-          <textarea
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit();
-            }}
-            rows={3}
-            placeholder="e.g. What do I tell a Croatian customer who got a parking fine despite paying via the app?"
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 resize-y"
-            disabled={status === 'streaming'}
-          />
-          <div className="mt-3 flex items-center justify-between">
-            <label className="text-xs text-slate-500 flex items-center gap-2">
-              Top-k:
-              <input
-                type="number"
-                min={1}
-                max={5}
-                value={topK}
-                onChange={(e) => setTopK(Math.max(1, Math.min(5, Number(e.target.value))))}
-                className="w-12 px-1.5 py-0.5 text-xs border border-slate-200 rounded font-mono tabular-nums"
-              />
-              <span className="text-[11px] text-slate-400">playbooks consulted</span>
-            </label>
-            <div className="flex items-center gap-2">
-              {(status === 'done' || status === 'error' || askedQuestion) && (
-                <button
-                  type="button"
-                  onClick={handleClear}
-                  className="px-3 py-1.5 text-sm border border-slate-200 text-slate-700 rounded hover:bg-slate-50"
-                  disabled={status === 'streaming'}
-                >
-                  Clear
-                </button>
-              )}
-              <button
-                type="submit"
-                disabled={!question.trim() || status === 'streaming'}
-                className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
-              >
-                {status === 'streaming' ? 'Thinking…' : 'Ask'}
-              </button>
+    <div className="h-full flex">
+      <ChatHistorySidebar
+        activeId={activeSessionId}
+        onSelect={loadSession}
+        onNewChat={startNewChat}
+      />
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        <div className="max-w-4xl mx-auto px-8 py-8 space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Chat</h1>
+              <p className="text-sm text-slate-500 mt-0.5">
+                Ask a free-form question — the answer is grounded in the top-k retrieved playbooks and cites them inline.
+              </p>
             </div>
+            <span className="text-[11px] font-mono text-slate-400">Sonnet 4.6</span>
           </div>
-          <p className="mt-2 text-[11px] text-slate-400">Cmd/Ctrl + Enter to submit</p>
-        </form>
 
-        {/* Answer */}
-        {askedQuestion && (
-          <section>
-            <header className="mb-2 flex items-center justify-between">
-              <h2 className="text-[11px] font-semibold tracking-wider uppercase text-slate-500">
-                Answer
-              </h2>
-              <div className="text-[11px] text-slate-400">
-                grounded in {sources.length || topK} playbook{sources.length === 1 ? '' : 's'}
-                {' · asked: '}
-                <em className="text-slate-500">{askedQuestion}</em>
-              </div>
-            </header>
-            <div className="bg-panel-surface border border-panel-border rounded-lg p-5">
-              {answer ? (
-                <ChatAnswer text={answer} citations={citations} />
-              ) : status === 'streaming' ? (
-                <div className="text-sm text-slate-400 flex items-center gap-2">
-                  <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                  Retrieving and drafting…
-                </div>
-              ) : null}
-              {status === 'error' && (
-                <div className="mt-3 text-sm text-red-600">{errorMsg}</div>
-              )}
-              <div ref={answerScrollRef} />
-            </div>
-          </section>
-        )}
-
-        {/* Sources */}
-        {sources.length > 0 && (
-          <section>
-            <header className="mb-2 flex items-center justify-between">
-              <h2 className="text-[11px] font-semibold tracking-wider uppercase text-slate-500">
-                Sources
-              </h2>
-              {status === 'done' &&
-                Array.from(citations.values()).every((c) => c.number > sources.length) && (
-                  <span className="text-[11px] text-amber-600">
-                    No inline citations detected — answer may be ungrounded.
-                  </span>
+          {/* Question form */}
+          <form
+            onSubmit={handleSubmit}
+            className="bg-panel-surface border border-panel-border rounded-lg p-4"
+          >
+            <textarea
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit();
+              }}
+              rows={3}
+              placeholder="e.g. What do I tell a Croatian customer who got a parking fine despite paying via the app?"
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 resize-y"
+              disabled={status === 'streaming'}
+            />
+            <div className="mt-3 flex items-center justify-between">
+              <label className="text-xs text-slate-500 flex items-center gap-2">
+                Top-k:
+                <input
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={topK}
+                  onChange={(e) => setTopK(Math.max(1, Math.min(5, Number(e.target.value))))}
+                  className="w-12 px-1.5 py-0.5 text-xs border border-slate-200 rounded font-mono tabular-nums"
+                />
+                <span className="text-[11px] text-slate-400">playbooks consulted</span>
+              </label>
+              <div className="flex items-center gap-2">
+                {(status === 'done' || status === 'error' || askedQuestion) && (
+                  <button
+                    type="button"
+                    onClick={startNewChat}
+                    className="px-3 py-1.5 text-sm border border-slate-200 text-slate-700 rounded hover:bg-slate-50"
+                    disabled={status === 'streaming'}
+                  >
+                    Clear
+                  </button>
                 )}
-            </header>
-            <ol className="space-y-2 list-none pl-0">
-              {orderedSources.map((hit) => {
-                const number = citations.get(hit.playbook_id)?.number ?? 0;
-                return <SourceCard key={hit.playbook_id} hit={hit} number={number} />;
-              })}
-            </ol>
-          </section>
-        )}
+                <button
+                  type="submit"
+                  disabled={!question.trim() || status === 'streaming'}
+                  className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
+                >
+                  {status === 'streaming' ? 'Thinking…' : 'Ask'}
+                </button>
+              </div>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-400">Cmd/Ctrl + Enter to submit</p>
+          </form>
 
-        {/* Empty state */}
-        {!askedQuestion && (
-          <div className="text-center text-sm text-slate-400 py-8">
-            Try asking about a parking-fine dispute, a payment failure, a missing invoice, …
-          </div>
-        )}
+          {askedQuestion && (
+            <section>
+              <header className="mb-2 flex items-center justify-between">
+                <h2 className="text-[11px] font-semibold tracking-wider uppercase text-slate-500">
+                  Answer
+                </h2>
+                <div className="text-[11px] text-slate-400">
+                  grounded in {sources.length || topK} playbook{sources.length === 1 ? '' : 's'}
+                  {' · asked: '}
+                  <em className="text-slate-500">{askedQuestion}</em>
+                </div>
+              </header>
+              <div className="bg-panel-surface border border-panel-border rounded-lg p-5">
+                {answer ? (
+                  <ChatAnswer text={answer} citations={citations} />
+                ) : status === 'streaming' ? (
+                  <div className="text-sm text-slate-400 flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                    Retrieving and drafting…
+                  </div>
+                ) : null}
+                {status === 'error' && (
+                  <div className="mt-3 text-sm text-red-600">{errorMsg}</div>
+                )}
+                <div ref={answerScrollRef} />
+              </div>
+            </section>
+          )}
+
+          {sources.length > 0 && (
+            <section>
+              <header className="mb-2 flex items-center justify-between">
+                <h2 className="text-[11px] font-semibold tracking-wider uppercase text-slate-500">
+                  Sources
+                </h2>
+                {status === 'done' &&
+                  Array.from(citations.values()).every((c) => c.number > sources.length) && (
+                    <span className="text-[11px] text-amber-600">
+                      No inline citations detected — answer may be ungrounded.
+                    </span>
+                  )}
+              </header>
+              <ol className="space-y-2 list-none pl-0">
+                {orderedSources.map((hit) => {
+                  const number = citations.get(hit.playbook_id)?.number ?? 0;
+                  return <SourceCard key={hit.playbook_id} hit={hit} number={number} />;
+                })}
+              </ol>
+            </section>
+          )}
+
+          {!askedQuestion && (
+            <div className="text-center text-sm text-slate-400 py-8">
+              Try asking about a parking-fine dispute, a payment failure, a missing invoice, …
+              Past chats appear on the left.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -10,6 +10,8 @@ import type {
   ChatDeltaEvent,
   ChatDoneEvent,
   ChatErrorEvent,
+  ChatSessionDetail,
+  ChatSessionSummary,
   ChatSourcesEvent,
   ClassifyRequest,
   ClassifyResponse,
@@ -147,6 +149,20 @@ export function rejectSuggestion(id: number): Promise<SuggestionRecord> {
 
 export function getSuggestionStats(): Promise<SuggestionStats> {
   return json<SuggestionStats>('/suggestions/stats');
+}
+
+// --- Chat history ---------------------------------------------------------
+export function listChatSessions(): Promise<ChatSessionSummary[]> {
+  return json<ChatSessionSummary[]>('/chat/sessions');
+}
+
+export function getChatSession(id: number): Promise<ChatSessionDetail> {
+  return json<ChatSessionDetail>(`/chat/sessions/${id}`);
+}
+
+export async function deleteChatSession(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/chat/sessions/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`${res.status} delete /chat/sessions/${id}`);
 }
 
 // --- Chat (SSE) ------------------------------------------------------------

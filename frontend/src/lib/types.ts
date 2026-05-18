@@ -252,7 +252,24 @@ export interface ChatDeltaEvent {
 export interface ChatDoneEvent {
   answer: string;
   cited_ids: string[];
+  session_id: number | null;
 }
 export interface ChatErrorEvent {
   message: string;
+}
+
+// Chat history
+export interface ChatSessionSummary {
+  id: number;
+  question: string;
+  top_k: number;
+  timestamp: string;
+  source_count: number;
+  citation_count: number;
+}
+
+export interface ChatSessionDetail extends ChatSessionSummary {
+  answer: string;
+  hits: RetrievalHitOut[];
+  cited_ids: string[];
 }
