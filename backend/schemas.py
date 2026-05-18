@@ -223,12 +223,14 @@ class ChatSessionSummary(BaseModel):
     timestamp: str
     source_count: int = 0
     citation_count: int = 0
+    status: str = "done"
 
 
 class ChatSessionDetail(ChatSessionSummary):
     answer: str
     hits: list[RetrievalHitOut] = Field(default_factory=list)
     cited_ids: list[str] = Field(default_factory=list)
+    error_message: str | None = None
 
 
 # --- Feedback --------------------------------------------------------------

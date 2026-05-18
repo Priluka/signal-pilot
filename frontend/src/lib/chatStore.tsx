@@ -21,7 +21,7 @@ import {
   type ReactNode,
 } from 'react';
 
-import { getChatSession, streamChatAnswer } from './api';
+import { attachToChatSession, getChatSession, streamChatAnswer } from './api';
 import type { RetrievalHitOut } from './types';
 
 
@@ -121,6 +121,9 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // --- Rehydrate the active session on mount -----------------------------
+  // If the saved session is still streaming on the backend, we *re-attach*
+  // to it via SSE so the operator sees the rest of the answer pour in.
+  // If it's done or errored, we just paint the final state.
   useEffect(() => {
     const savedId = readNumber(LS_ACTIVE_ID, NaN);
     if (!Number.isFinite(savedId) || savedId <= 0) return;
@@ -134,7 +137,28 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
         setSources(s.hits);
         setTopKState(Math.max(1, Math.min(5, s.top_k)));
         setActiveSessionId(s.id);
-        setStatus('done');
+
+        if (s.status === 'streaming') {
+          setStatus('streaming');
+          abortRef.current = attachToChatSession(s.id, {
+            onSources: (e) => setSources(e.hits),
+            onDelta: (e) => setAnswer((prev) => prev + e.text),
+            onDone: (e) => {
+              setAnswer(e.answer);
+              setStatus('done');
+              window.dispatchEvent(new Event('chat-sessions-changed'));
+            },
+            onError: (e) => {
+              setErrorMsg(e.message);
+              setStatus('error');
+            },
+          });
+        } else if (s.status === 'error') {
+          setErrorMsg(s.error_message ?? 'unknown error');
+          setStatus('error');
+        } else {
+          setStatus('done');
+        }
       } catch {
         // Stale id — the row may have been deleted. Clear and continue.
         writeString(LS_ACTIVE_ID, null);

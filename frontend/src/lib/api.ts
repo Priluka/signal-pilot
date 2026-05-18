@@ -189,14 +189,50 @@ export function streamChatAnswer(
   top_k: number,
   handlers: ChatStreamHandlers,
 ): AbortController {
+  return _consumeSSE(
+    `${API_BASE}/chat/answer`,
+    { method: 'POST', body: JSON.stringify({ question, top_k }) },
+    handlers,
+  );
+}
+
+
+/**
+ * Re-attach to an in-flight (or already finished) chat session.
+ *
+ * Used on mount when localStorage has an activeSessionId that's still
+ * ``streaming`` on the backend — the generator runs in a daemon thread so
+ * it survived the page refresh, and this endpoint replays whatever's in
+ * the DB plus any new chunks until done.
+ */
+export function attachToChatSession(
+  session_id: number,
+  handlers: ChatStreamHandlers,
+): AbortController {
+  return _consumeSSE(
+    `${API_BASE}/chat/sessions/${session_id}/stream`,
+    { method: 'GET' },
+    handlers,
+  );
+}
+
+
+function _consumeSSE(
+  url: string,
+  init: RequestInit,
+  handlers: ChatStreamHandlers,
+): AbortController {
   const controller = new AbortController();
 
   (async () => {
     try {
-      const res = await fetch(`${API_BASE}/chat/answer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, top_k }),
+      const res = await fetch(url, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+          ...(init.headers ?? {}),
+        },
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -213,7 +249,6 @@ export function streamChatAnswer(
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        // SSE separates events with a blank line (\n\n).
         let blankIdx: number;
         while ((blankIdx = buffer.indexOf('\n\n')) !== -1) {
           const raw = buffer.slice(0, blankIdx);

@@ -18,6 +18,8 @@ from typing import Any, Iterator
 import config
 
 
+SessionStatus = str  # 'streaming' | 'done' | 'error' — checked in app code
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +28,10 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     hits_json       TEXT NOT NULL,
     cited_ids_json  TEXT NOT NULL DEFAULT '[]',
     top_k           INTEGER NOT NULL,
-    timestamp       TEXT NOT NULL
+    timestamp       TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'streaming'
+                    CHECK (status IN ('streaming','done','error')),
+    error_message   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_ts ON chat_sessions(timestamp);
@@ -42,12 +47,17 @@ class ChatSession:
     cited_ids: list[str]
     top_k: int
     timestamp: str
+    status: str = "done"
+    error_message: str | None = None
 
 
 @contextmanager
 def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    # timeout=10 lets the reader/writer threads block briefly on the SQLite
+    # file lock instead of bouncing with "database is locked" — important now
+    # that the chat generator thread writes while the SSE tail thread reads.
+    conn = sqlite3.connect(db_path, timeout=10.0)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -56,9 +66,29 @@ def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def _migrate_if_needed(conn: sqlite3.Connection) -> None:
+    """Add the status + error_message columns if we're hitting a pre-status
+    schema. Existing rows (created when sessions only landed on done) get
+    status='done' so the history rail keeps showing them as completed."""
+    rows = conn.execute("PRAGMA table_info(chat_sessions)").fetchall()
+    cols = {row[1] for row in rows}
+    if cols and "status" not in cols:
+        conn.execute(
+            "ALTER TABLE chat_sessions "
+            "ADD COLUMN status TEXT NOT NULL DEFAULT 'streaming'"
+        )
+        conn.execute(
+            "ALTER TABLE chat_sessions ADD COLUMN error_message TEXT"
+        )
+        # Pre-existing rows are by definition complete (the old code only
+        # wrote on done) — mark them as such.
+        conn.execute("UPDATE chat_sessions SET status = 'done' WHERE status = 'streaming'")
+
+
 def init_db(db_path: Path = config.FEEDBACK_DB_PATH) -> None:
     with _connect(db_path) as conn:
         conn.executescript(_SCHEMA)
+        _migrate_if_needed(conn)
 
 
 def _row_to_session(row: sqlite3.Row) -> ChatSession:
@@ -70,6 +100,10 @@ def _row_to_session(row: sqlite3.Row) -> ChatSession:
         cited_ids=json.loads(row["cited_ids_json"]),
         top_k=row["top_k"],
         timestamp=row["timestamp"],
+        status=row["status"] if "status" in row.keys() else "done",
+        error_message=(
+            row["error_message"] if "error_message" in row.keys() else None
+        ),
     )
 
 
@@ -109,11 +143,13 @@ def update_session(
     *,
     answer: str | None = None,
     cited_ids: list[str] | None = None,
+    status: str | None = None,
+    error_message: str | None = None,
     db_path: Path = config.FEEDBACK_DB_PATH,
 ) -> ChatSession | None:
-    """Patch an existing chat session. Used for checkpointing during streaming
-    and for the final write at the ``done`` event. Either field may be
-    omitted to update only the other one."""
+    """Patch an existing chat session. Any subset of fields may be omitted."""
+    if status is not None and status not in ("streaming", "done", "error"):
+        raise ValueError(f"invalid status: {status!r}")
     init_db(db_path)
     sets: list[str] = []
     params: list[Any] = []
@@ -123,6 +159,12 @@ def update_session(
     if cited_ids is not None:
         sets.append("cited_ids_json = ?")
         params.append(json.dumps(cited_ids))
+    if status is not None:
+        sets.append("status = ?")
+        params.append(status)
+    if error_message is not None:
+        sets.append("error_message = ?")
+        params.append(error_message)
     if not sets:
         return get_session(session_id, db_path)
     params.append(session_id)

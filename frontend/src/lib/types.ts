@@ -270,10 +270,12 @@ export interface ChatSessionSummary {
   timestamp: string;
   source_count: number;
   citation_count: number;
+  status: 'streaming' | 'done' | 'error';
 }
 
 export interface ChatSessionDetail extends ChatSessionSummary {
   answer: string;
   hits: RetrievalHitOut[];
   cited_ids: string[];
+  error_message: string | null;
 }
