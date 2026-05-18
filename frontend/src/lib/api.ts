@@ -6,6 +6,7 @@
  * with ``VITE_API_URL=https://api.example.com`` in ``.env.local``.
  */
 import type {
+  AgentActivityEvent,
   AgentMetrics,
   AgentSessionDetail,
   AgentSessionSummary,
@@ -159,6 +160,10 @@ export function getAgentBatchStatus(): Promise<BatchStatus> {
 
 export function getAgentMetrics(): Promise<AgentMetrics> {
   return json<AgentMetrics>('/agent/metrics');
+}
+
+export function listAgentActivity(limit = 500): Promise<AgentActivityEvent[]> {
+  return json<AgentActivityEvent[]>(`/agent/activity?limit=${limit}`);
 }
 
 export async function deleteAgentSession(ticketId: string): Promise<void> {

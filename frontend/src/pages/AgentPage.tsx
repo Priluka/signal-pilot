@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
+import { AgentActivityLog } from '../components/AgentActivityLog';
 import {
   AgentInbox,
   sortInbox,
@@ -38,7 +39,7 @@ import type {
 } from '../lib/types';
 
 
-type ViewMode = 'needs_attention' | 'full';
+type ViewMode = 'needs_attention' | 'full' | 'activity';
 type StatusFilter = AgentStatus | 'all';
 
 const NEEDS_ATTENTION_SET = new Set<AgentStatus>(['needs_review', 'escalated']);
@@ -208,21 +209,31 @@ export function AgentPage() {
         )}
       </header>
       <div className="flex-1 flex overflow-hidden">
-        <AgentInbox rows={inboxRows} loading={ticketsLoading} error={ticketsError} />
-        {activeLoading ? (
-          <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
-            Loading ticket…
-          </div>
-        ) : activeTicket ? (
-          <AgentTicketDetail ticket={activeTicket} />
+        {view === 'activity' ? (
+          <AgentActivityLog />
         ) : (
-          <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
-            {inboxRows.length === 0
-              ? batch?.running
-                ? `Processing tickets… ${batch.processed} / ${batch.total}`
-                : 'Nothing in this view.'
-              : 'Pick a ticket from the inbox.'}
-          </div>
+          <>
+            <AgentInbox
+              rows={inboxRows}
+              loading={ticketsLoading}
+              error={ticketsError}
+            />
+            {activeLoading ? (
+              <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
+                Loading ticket…
+              </div>
+            ) : activeTicket ? (
+              <AgentTicketDetail ticket={activeTicket} />
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
+                {inboxRows.length === 0
+                  ? batch?.running
+                    ? `Processing tickets… ${batch.processed} / ${batch.total}`
+                    : 'Nothing in this view.'
+                  : 'Pick a ticket from the inbox.'}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -242,7 +253,8 @@ function ViewToggle({
       {(
         [
           ['needs_attention', 'Needs attention'],
-          ['full', 'Full trail'],
+          ['full', 'All tickets'],
+          ['activity', 'Activity log'],
         ] as const
       ).map(([key, label]) => (
         <button

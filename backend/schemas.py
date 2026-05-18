@@ -269,6 +269,16 @@ class AgentMetrics(BaseModel):
     avg_confidence: float = 0.0
 
 
+class AgentActivityEvent(BaseModel):
+    """One agent step or operator decision — derived from agent_sessions
+    timestamps and rendered as a single row in the Activity log."""
+
+    timestamp: str
+    ticket_id: str
+    event_type: str  # classified | retrieved | drafted | approved | edited | rejected | skipped
+    detail: str
+
+
 # --- Chat ------------------------------------------------------------------
 class ChatRequest(BaseModel):
     question: str

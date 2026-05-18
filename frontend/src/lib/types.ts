@@ -237,6 +237,22 @@ export interface AgentMetrics {
   avg_confidence: number;
 }
 
+export type AgentEventType =
+  | 'classified'
+  | 'retrieved'
+  | 'drafted'
+  | 'approved'
+  | 'edited'
+  | 'rejected'
+  | 'skipped';
+
+export interface AgentActivityEvent {
+  timestamp: string;
+  ticket_id: string;
+  event_type: AgentEventType;
+  detail: string;
+}
+
 export interface FeedbackRequest {
   ticket_id: string;
   playbook_id: string;

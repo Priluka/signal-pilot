@@ -17,6 +17,7 @@ from core.retrieval import (
 
 from ..deps import get_playbook_index, get_playbooks, get_tickets
 from ..schemas import (
+    AgentActivityEvent,
     AgentMetrics,
     AgentSessionDetail,
     AgentSessionSummary,
@@ -223,6 +224,97 @@ def batch_process(
 @router.get("/batch-status", response_model=BatchStatus)
 def batch_status() -> BatchStatus:
     return BatchStatus(**agent_runner.get_batch_status())
+
+
+@router.get("/activity", response_model=list[AgentActivityEvent])
+def list_activity(limit: int = 500) -> list[AgentActivityEvent]:
+    """Flatten every agent_session into one event per step + one per decision.
+    Sorted newest-first so the frontend can append below without re-sorting."""
+    events: list[AgentActivityEvent] = []
+    for s in agent_sessions.list_sessions():
+        classification = s.classification or {}
+        retrieval = s.retrieval or {}
+        draft = s.draft or {}
+
+        if s.classified_at and classification:
+            label = classification.get("label", "?")
+            confidence = classification.get("confidence")
+            conf_str = (
+                f"{float(confidence):.2f}"
+                if isinstance(confidence, (int, float))
+                else "—"
+            )
+            if label in ("internal_log", "spam_or_junk"):
+                events.append(
+                    AgentActivityEvent(
+                        timestamp=s.classified_at,
+                        ticket_id=s.ticket_id,
+                        event_type="skipped",
+                        detail=f"{label} ({conf_str}) — no reply needed",
+                    )
+                )
+            else:
+                events.append(
+                    AgentActivityEvent(
+                        timestamp=s.classified_at,
+                        ticket_id=s.ticket_id,
+                        event_type="classified",
+                        detail=f"{label} ({conf_str})",
+                    )
+                )
+
+        if s.retrieved_at and retrieval:
+            hits = retrieval.get("hits") or []
+            top = hits[0] if hits else None
+            if top:
+                title = str(top.get("title") or "")[:60]
+                score = top.get("score")
+                score_str = (
+                    f"{float(score):.2f}" if isinstance(score, (int, float)) else "—"
+                )
+                detail = (
+                    f"{len(hits)} match{'es' if len(hits) != 1 else ''}, "
+                    f"top: {title} ({score_str})"
+                )
+            else:
+                detail = "0 matches"
+            events.append(
+                AgentActivityEvent(
+                    timestamp=s.retrieved_at,
+                    ticket_id=s.ticket_id,
+                    event_type="retrieved",
+                    detail=detail,
+                )
+            )
+
+        if s.drafted_at and draft:
+            action = str(draft.get("recommended_action") or "").replace("_", " ")
+            events.append(
+                AgentActivityEvent(
+                    timestamp=s.drafted_at,
+                    ticket_id=s.ticket_id,
+                    event_type="drafted",
+                    detail=f"recommended: {action}" if action else "draft generated",
+                )
+            )
+
+        if s.feedback_at and s.feedback_status:
+            label_map = {
+                "approved": "Reviewer approved",
+                "edited": "Reviewer approved with edits",
+                "rejected": "Reviewer rejected",
+            }
+            events.append(
+                AgentActivityEvent(
+                    timestamp=s.feedback_at,
+                    ticket_id=s.ticket_id,
+                    event_type=s.feedback_status,
+                    detail=label_map.get(s.feedback_status, s.feedback_status),
+                )
+            )
+
+    events.sort(key=lambda e: e.timestamp, reverse=True)
+    return events[:limit]
 
 
 @router.get("/metrics", response_model=AgentMetrics)
