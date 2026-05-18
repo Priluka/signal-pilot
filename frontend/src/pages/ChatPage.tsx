@@ -9,7 +9,6 @@ import { useEffect, useMemo, useRef } from 'react';
 
 import { ChatAnswer, buildCitationMap } from '../components/ChatAnswer';
 import { ChatHistorySidebar } from '../components/ChatHistorySidebar';
-import { SourceCard } from '../components/SourceCard';
 import { useChatStore } from '../lib/chatStore';
 
 
@@ -39,15 +38,13 @@ export function ChatPage() {
     () => buildCitationMap(chat.answer, chat.sources),
     [chat.answer, chat.sources],
   );
-  const orderedSources = useMemo(() => {
-    return [...chat.sources].sort((a, b) => {
-      const na = citations.get(a.playbook_id)?.number ?? 999;
-      const nb = citations.get(b.playbook_id)?.number ?? 999;
-      return na - nb;
-    });
-  }, [chat.sources, citations]);
 
   const isStreaming = chat.status === 'streaming';
+  const noCitationsDetected =
+    chat.status === 'done' &&
+    chat.answer.length > 0 &&
+    chat.sources.length > 0 &&
+    Array.from(citations.values()).every((c) => c.number > chat.sources.length);
 
   return (
     <div className="h-full flex">
@@ -144,28 +141,11 @@ export function ChatPage() {
                 )}
                 <div ref={answerScrollRef} />
               </div>
-            </section>
-          )}
-
-          {chat.sources.length > 0 && (
-            <section>
-              <header className="mb-2 flex items-center justify-between">
-                <h2 className="text-[11px] font-semibold tracking-wider uppercase text-slate-500">
-                  Sources
-                </h2>
-                {chat.status === 'done' &&
-                  Array.from(citations.values()).every((c) => c.number > chat.sources.length) && (
-                    <span className="text-[11px] text-amber-600">
-                      No inline citations detected — answer may be ungrounded.
-                    </span>
-                  )}
-              </header>
-              <ol className="space-y-2 list-none pl-0">
-                {orderedSources.map((hit) => {
-                  const number = citations.get(hit.playbook_id)?.number ?? 0;
-                  return <SourceCard key={hit.playbook_id} hit={hit} number={number} />;
-                })}
-              </ol>
+              {noCitationsDetected && (
+                <p className="mt-2 text-[11px] text-amber-600">
+                  No inline citations detected — answer may be ungrounded.
+                </p>
+              )}
             </section>
           )}
 

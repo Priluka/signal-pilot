@@ -10,6 +10,7 @@
  * override below, which renders the <sup> link.
  */
 import { useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -54,13 +55,13 @@ export function ChatAnswer({
               const info = citations.get(id);
               if (info) {
                 return (
-                  <a
-                    href={`#source-${info.number}`}
+                  <Link
+                    to={`/knowledge/${id}`}
                     title={info.title}
                     className="sp-citation"
                   >
                     {info.number}
-                  </a>
+                  </Link>
                 );
               }
               // Citation marker but the id wasn't in our source list — render
