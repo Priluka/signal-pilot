@@ -212,6 +212,13 @@ export interface SuggestionRecord {
   timestamp: string;
 }
 
+export interface SuggestionStats {
+  pending: number;
+  accepted: number;
+  rejected: number;
+  total: number;
+}
+
 // Knowledge graph
 export interface GraphNode {
   id: string;

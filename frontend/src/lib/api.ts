@@ -25,6 +25,7 @@ import type {
   RetrieveResponse,
   SuggestionRecord,
   SuggestionRequest,
+  SuggestionStats,
   TicketDetail,
   TicketSummary,
 } from './types';
@@ -142,6 +143,10 @@ export function acceptSuggestion(id: number): Promise<SuggestionRecord> {
 
 export function rejectSuggestion(id: number): Promise<SuggestionRecord> {
   return json<SuggestionRecord>(`/suggestions/${id}/reject`, { method: 'PUT' });
+}
+
+export function getSuggestionStats(): Promise<SuggestionStats> {
+  return json<SuggestionStats>('/suggestions/stats');
 }
 
 // --- Chat (SSE) ------------------------------------------------------------

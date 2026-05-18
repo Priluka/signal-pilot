@@ -62,6 +62,7 @@ export function SuggestionsPage() {
     try {
       const updated = await acceptSuggestion(s.id);
       setSuggestions((prev) => prev.map((x) => (x.id === s.id ? updated : x)));
+      window.dispatchEvent(new Event('suggestions-changed'));
       toast.success(`#${s.id} accepted · committed to repo`);
     } catch (err) {
       toast.error((err as Error).message);
@@ -75,6 +76,7 @@ export function SuggestionsPage() {
     try {
       const updated = await rejectSuggestion(s.id);
       setSuggestions((prev) => prev.map((x) => (x.id === s.id ? updated : x)));
+      window.dispatchEvent(new Event('suggestions-changed'));
       toast.success(`#${s.id} rejected`);
     } catch (err) {
       toast.error((err as Error).message);

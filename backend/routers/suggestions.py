@@ -9,7 +9,7 @@ from core import suggestions as suggestions_store
 from core.retrieval import Playbook, load_playbook
 
 from ..deps import get_playbooks
-from ..schemas import SuggestionRecordOut, SuggestionRequest
+from ..schemas import SuggestionRecordOut, SuggestionRequest, SuggestionStats
 
 
 router = APIRouter(prefix="/suggestions", tags=["suggestions"])
@@ -61,6 +61,21 @@ def list_suggestions(
             limit=limit,
         )
     ]
+
+
+@router.get("/stats", response_model=SuggestionStats)
+def stats() -> SuggestionStats:
+    rows = suggestions_store.list_suggestions(limit=1000)
+    counts = {"pending": 0, "accepted": 0, "rejected": 0}
+    for r in rows:
+        if r.status in counts:
+            counts[r.status] += 1
+    return SuggestionStats(
+        pending=counts["pending"],
+        accepted=counts["accepted"],
+        rejected=counts["rejected"],
+        total=sum(counts.values()),
+    )
 
 
 @router.put("/{suggestion_id}/accept", response_model=SuggestionRecordOut)

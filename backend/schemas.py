@@ -262,3 +262,10 @@ class SuggestionRecordOut(BaseModel):
     author: str
     status: str
     timestamp: str
+
+
+class SuggestionStats(BaseModel):
+    pending: int = 0
+    accepted: int = 0
+    rejected: int = 0
+    total: int = 0

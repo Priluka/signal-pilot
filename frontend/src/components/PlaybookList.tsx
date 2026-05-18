@@ -38,7 +38,7 @@ export function PlaybookList({
   }, [playbooks, search]);
 
   return (
-    <div className="flex flex-col w-[340px] shrink-0 border-r border-panel-border bg-panel-surface">
+    <div className="flex flex-col flex-1 min-h-0">
       <div className="px-4 py-3 border-b border-panel-border">
         <input
           type="text"

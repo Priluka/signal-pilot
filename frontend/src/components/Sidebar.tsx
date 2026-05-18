@@ -1,39 +1,37 @@
-/**
- * Dark fixed sidebar with three navigation sections + a Chat link pinned at
- * the bottom. Category counts are fetched live from /categories so the
- * sidebar always reflects the actual corpus.
+/** Dark fixed sidebar — flat navigation.
+ *
+ * Surfaces only the four real destinations (Playbooks / Chat / Agent Feed /
+ * Suggestions) plus a disabled placeholder for Agents. Counters next to
+ * Playbooks and Suggestions are fetched live so the sidebar always reflects
+ * the corpus and the review queue.
+ *
+ * Other components (PlaybookViewer, SuggestionsPage) emit a custom
+ * 'suggestions-changed' window event whenever they submit, accept, or
+ * reject a row so the pending badge can refresh without polling.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 
-import { getCategories } from '../lib/api';
-import type { CategoriesResponse } from '../lib/types';
+import { getCategories, getSuggestionStats } from '../lib/api';
 
 
-function SectionHeading({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="px-4 pt-6 pb-2 text-[11px] font-semibold tracking-wider uppercase text-sidebar-heading">
-      {children}
-    </div>
-  );
-}
-
-function NavRow({
-  to,
-  label,
-  count,
-}: {
+interface CountedNavRowProps {
   to: string;
   label: string;
   count?: number;
-}) {
+  /** Render the count as a colored pill instead of a muted number. */
+  badge?: boolean;
+}
+
+
+function NavRow({ to, label, count, badge }: CountedNavRowProps) {
   return (
     <NavLink
       to={to}
-      end
+      end={to === '/'}
       className={({ isActive }) =>
         [
-          'flex items-center justify-between px-4 py-1.5 mx-2 rounded-md text-sm transition-colors',
+          'flex items-center justify-between px-3 py-2 mx-2 rounded-md text-sm transition-colors',
           isActive
             ? 'bg-sidebar-surface text-sidebar-textActive'
             : 'text-sidebar-text hover:bg-sidebar-surface/60 hover:text-sidebar-textActive',
@@ -41,37 +39,60 @@ function NavRow({
       }
     >
       <span>{label}</span>
-      {typeof count === 'number' && (
-        <span className="text-xs text-sidebar-muted font-mono tabular-nums">
-          {count}
-        </span>
+      {typeof count === 'number' && count > 0 && (
+        badge ? (
+          <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-blue-500 text-white">
+            {count}
+          </span>
+        ) : (
+          <span className="text-xs text-sidebar-muted font-mono tabular-nums">{count}</span>
+        )
       )}
     </NavLink>
   );
 }
 
+
+function DisabledRow({ label, hint }: { label: string; hint: string }) {
+  return (
+    <div
+      title={hint}
+      className="flex items-center justify-between px-3 py-2 mx-2 rounded-md text-sm text-sidebar-heading cursor-not-allowed select-none"
+    >
+      <span>{label}</span>
+      <span className="text-[10px] italic">coming soon</span>
+    </div>
+  );
+}
+
+
 export function Sidebar() {
-  const [categories, setCategories] = useState<CategoriesResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [playbooksCount, setPlaybooksCount] = useState<number | undefined>(undefined);
+  const [pendingCount, setPendingCount] = useState<number | undefined>(undefined);
+
+  const refreshPlaybooks = useCallback(() => {
+    getCategories()
+      .then((data) => setPlaybooksCount(data.total))
+      .catch(() => setPlaybooksCount(undefined));
+  }, []);
+
+  const refreshSuggestions = useCallback(() => {
+    getSuggestionStats()
+      .then((stats) => setPendingCount(stats.pending))
+      .catch(() => setPendingCount(undefined));
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    getCategories()
-      .then((data) => {
-        if (!cancelled) setCategories(data);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    refreshPlaybooks();
+    refreshSuggestions();
+    const handler = () => refreshSuggestions();
+    window.addEventListener('suggestions-changed', handler);
+    return () => window.removeEventListener('suggestions-changed', handler);
+  }, [refreshPlaybooks, refreshSuggestions]);
 
   return (
     <aside className="flex flex-col w-64 shrink-0 bg-sidebar-bg border-r border-sidebar-border text-sidebar-text">
-      {/* Logo */}
-      <div className="px-5 pt-6 pb-2">
+      <div className="px-5 pt-6 pb-4">
         <div className="text-base font-semibold text-sidebar-textActive tracking-tight">
           Signal Pilot
         </div>
@@ -80,69 +101,15 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto scrollbar-thin pb-4">
-        <SectionHeading>Knowledge Library</SectionHeading>
-        <NavRow to="/knowledge" label="Playbooks" count={categories?.total} />
-        <NavRow
-          to="/knowledge?issue_category=knowledge_gap"
-          label="Gaps"
-          count={
-            categories?.issue_categories.find((c) => c.name === 'knowledge_gap')?.count
-          }
-        />
-        <NavRow to="/graph" label="Graph" />
-        <NavRow to="/suggestions" label="Suggestions" />
+      <nav className="flex-1 overflow-y-auto scrollbar-thin py-2 space-y-0.5">
+        <NavRow to="/knowledge" label="Playbooks" count={playbooksCount} />
+        <NavRow to="/chat" label="Chat" />
+        <NavRow to="/agent" label="Agent Feed" />
+        <NavRow to="/suggestions" label="Suggestions" count={pendingCount} badge />
+      </nav>
 
-        <SectionHeading>Categories</SectionHeading>
-        {error && (
-          <div className="px-4 text-[11px] text-red-400">{error}</div>
-        )}
-        {categories &&
-          categories.issue_categories.map((cat) => (
-            <NavRow
-              key={cat.name}
-              to={`/knowledge?issue_category=${cat.name}`}
-              label={cat.name}
-              count={cat.count}
-            />
-          ))}
-
-        <SectionHeading>Agents</SectionHeading>
-        <NavRow to="/agents/deployed" label="Deployed" />
-        <NavRow to="/agents/shadow" label="Shadow mode" />
-        <NavRow to="/agents/performance" label="Performance" />
-      </div>
-
-      {/* Pinned Chat link at the bottom */}
-      <div className="border-t border-sidebar-border px-2 py-3">
-        <NavLink
-          to="/chat"
-          className={({ isActive }) =>
-            [
-              'flex items-center justify-between px-3 py-2 rounded-md text-sm transition-colors',
-              isActive
-                ? 'bg-sidebar-surface text-sidebar-textActive'
-                : 'text-sidebar-text hover:bg-sidebar-surface/60 hover:text-sidebar-textActive',
-            ].join(' ')
-          }
-        >
-          <span>Chat</span>
-          <span className="text-xs text-sidebar-muted">Sonnet 4.6</span>
-        </NavLink>
-        <NavLink
-          to="/agent"
-          className={({ isActive }) =>
-            [
-              'flex items-center justify-between mt-1 px-3 py-2 rounded-md text-sm transition-colors',
-              isActive
-                ? 'bg-sidebar-surface text-sidebar-textActive'
-                : 'text-sidebar-text hover:bg-sidebar-surface/60 hover:text-sidebar-textActive',
-            ].join(' ')
-          }
-        >
-          <span>Agent Feed</span>
-          <span className="text-xs text-sidebar-muted">50 tickets</span>
-        </NavLink>
+      <div className="border-t border-sidebar-border py-2">
+        <DisabledRow label="Agents" hint="Coming soon — deployed agents, shadow mode, performance" />
       </div>
     </aside>
   );

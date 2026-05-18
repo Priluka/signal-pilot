@@ -186,6 +186,7 @@ function WhenApplies({
                     old_text: b.rawLine,
                     new_text: `${prefix}${newText}`,
                   });
+                  window.dispatchEvent(new Event('suggestions-changed'));
                   toast.success('Suggestion submitted');
                 }}
               />
@@ -231,6 +232,7 @@ function ResolutionSteps({
                     old_text: oldRaw,
                     new_text: newRaw,
                   });
+                  window.dispatchEvent(new Event('suggestions-changed'));
                   toast.success('Suggestion submitted');
                 }}
               />
@@ -267,7 +269,10 @@ function ActionsTable({
       step_number: rowIdx + 1,
       old_text: oldValue,
       new_text: newValue,
-    }).then(() => toast.success('Suggestion submitted'));
+    }).then(() => {
+      window.dispatchEvent(new Event('suggestions-changed'));
+      toast.success('Suggestion submitted');
+    });
   }
 
   return (
