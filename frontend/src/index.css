@@ -50,3 +50,63 @@ body {
   background: #f1f5f9;
   color: #64748b;
 }
+
+/* Wikipedia-style hover preview card on citation pills. */
+.sp-citation-wrap {
+  position: relative;
+  display: inline-block;
+  vertical-align: baseline;
+}
+.sp-citation-popover {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-top: 6px;
+  width: 280px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+  padding: 10px 12px;
+  z-index: 50;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%) translateY(-2px);
+  transition: opacity 120ms ease, visibility 120ms, transform 120ms ease;
+  pointer-events: none;
+  white-space: normal;
+  text-align: left;
+  font-family: 'Inter Variable', Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+  vertical-align: super;
+}
+.sp-citation-wrap:hover .sp-citation-popover {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+  transition-delay: 250ms;
+  pointer-events: auto;
+}
+.sp-citation-popover-title {
+  display: block;
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: #0f172a;
+  line-height: 1.35;
+  margin-bottom: 4px;
+}
+.sp-citation-popover-desc {
+  font-size: 0.7rem;
+  color: #475569;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.sp-citation-popover-cta {
+  display: block;
+  font-size: 0.65rem;
+  color: #2563eb;
+  font-weight: 500;
+}

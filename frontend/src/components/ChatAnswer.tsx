@@ -18,6 +18,7 @@ import remarkGfm from 'remark-gfm';
 export interface CitationInfo {
   number: number;
   title: string;
+  description?: string;
 }
 
 
@@ -55,13 +56,22 @@ export function ChatAnswer({
               const info = citations.get(id);
               if (info) {
                 return (
-                  <Link
-                    to={`/knowledge/${id}`}
-                    title={info.title}
-                    className="sp-citation"
-                  >
-                    {info.number}
-                  </Link>
+                  <span className="sp-citation-wrap">
+                    <Link to={`/knowledge/${id}`} className="sp-citation">
+                      {info.number}
+                    </Link>
+                    <span className="sp-citation-popover" role="tooltip">
+                      <span className="sp-citation-popover-title">{info.title}</span>
+                      {info.description && (
+                        <span className="sp-citation-popover-desc">
+                          {info.description}
+                        </span>
+                      )}
+                      <span className="sp-citation-popover-cta">
+                        Open playbook →
+                      </span>
+                    </span>
+                  </span>
                 );
               }
               // Citation marker but the id wasn't in our source list — render
@@ -97,21 +107,32 @@ export function ChatAnswer({
  */
 export function buildCitationMap(
   answerText: string,
-  retrievedSources: { playbook_id: string; title: string }[],
+  retrievedSources: { playbook_id: string; title: string; description?: string }[],
 ): Map<string, CitationInfo> {
-  const known = new Map(retrievedSources.map((s) => [s.playbook_id, s.title]));
+  const known = new Map(
+    retrievedSources.map((s) => [s.playbook_id, { title: s.title, description: s.description }]),
+  );
   const map = new Map<string, CitationInfo>();
   let counter = 1;
 
   for (const match of answerText.matchAll(CITATION_GLOBAL_RE)) {
     const id = match[0].slice(1, -1);
     if (known.has(id) && !map.has(id)) {
-      map.set(id, { number: counter++, title: known.get(id)! });
+      const meta = known.get(id)!;
+      map.set(id, {
+        number: counter++,
+        title: meta.title,
+        description: meta.description,
+      });
     }
   }
   for (const s of retrievedSources) {
     if (!map.has(s.playbook_id)) {
-      map.set(s.playbook_id, { number: counter++, title: s.title });
+      map.set(s.playbook_id, {
+        number: counter++,
+        title: s.title,
+        description: s.description,
+      });
     }
   }
   return map;
