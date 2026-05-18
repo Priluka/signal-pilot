@@ -136,6 +136,14 @@ export function listSuggestions(playbookId?: string): Promise<SuggestionRecord[]
   return json<SuggestionRecord[]>(`/suggestions${qs}`);
 }
 
+export function acceptSuggestion(id: number): Promise<SuggestionRecord> {
+  return json<SuggestionRecord>(`/suggestions/${id}/accept`, { method: 'PUT' });
+}
+
+export function rejectSuggestion(id: number): Promise<SuggestionRecord> {
+  return json<SuggestionRecord>(`/suggestions/${id}/reject`, { method: 'PUT' });
+}
+
 // --- Chat (SSE) ------------------------------------------------------------
 export interface ChatStreamHandlers {
   onSources?: (e: ChatSourcesEvent) => void;

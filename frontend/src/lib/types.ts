@@ -193,14 +193,22 @@ export interface FeedbackStats {
 
 export interface SuggestionRequest {
   playbook_id: string;
-  text: string;
+  section: string;
+  step_number: number | null;
+  old_text: string;
+  new_text: string;
+  author?: string;
 }
 
 export interface SuggestionRecord {
   id: number;
   playbook_id: string;
-  text: string;
-  status: string;
+  section: string;
+  step_number: number | null;
+  old_text: string;
+  new_text: string;
+  author: string;
+  status: 'pending' | 'accepted' | 'rejected';
   timestamp: string;
 }
 

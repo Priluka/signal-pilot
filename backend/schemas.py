@@ -245,12 +245,20 @@ class FeedbackStats(BaseModel):
 # --- Suggestions -----------------------------------------------------------
 class SuggestionRequest(BaseModel):
     playbook_id: str
-    text: str
+    section: str
+    step_number: int | None = None
+    old_text: str
+    new_text: str
+    author: str = "anonymous"
 
 
 class SuggestionRecordOut(BaseModel):
     id: int
     playbook_id: str
-    text: str
+    section: str
+    step_number: int | None
+    old_text: str
+    new_text: str
+    author: str
     status: str
     timestamp: str

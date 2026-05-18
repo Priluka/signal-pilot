@@ -1,10 +1,14 @@
 """Operator-submitted playbook edit suggestions."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from core import suggestions as suggestions_store
+from core.retrieval import Playbook, load_playbook
 
+from ..deps import get_playbooks
 from ..schemas import SuggestionRecordOut, SuggestionRequest
 
 
@@ -15,7 +19,11 @@ def _to_out(r: suggestions_store.SuggestionRecord) -> SuggestionRecordOut:
     return SuggestionRecordOut(
         id=r.id,
         playbook_id=r.playbook_id,
-        text=r.text,
+        section=r.section,
+        step_number=r.step_number,
+        old_text=r.old_text,
+        new_text=r.new_text,
+        author=r.author,
         status=r.status,
         timestamp=r.timestamp,
     )
@@ -23,11 +31,18 @@ def _to_out(r: suggestions_store.SuggestionRecord) -> SuggestionRecordOut:
 
 @router.post("", response_model=SuggestionRecordOut)
 def submit_suggestion(req: SuggestionRequest) -> SuggestionRecordOut:
-    if not req.playbook_id.strip() or not req.text.strip():
-        raise HTTPException(status_code=422, detail="playbook_id and text are required")
+    if not req.playbook_id.strip() or not req.old_text or not req.new_text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="playbook_id, old_text, and new_text are required",
+        )
     record = suggestions_store.record_suggestion(
         playbook_id=req.playbook_id,
-        text=req.text,
+        section=req.section,
+        step_number=req.step_number,
+        old_text=req.old_text,
+        new_text=req.new_text,
+        author=req.author or "anonymous",
     )
     return _to_out(record)
 
@@ -46,3 +61,42 @@ def list_suggestions(
             limit=limit,
         )
     ]
+
+
+@router.put("/{suggestion_id}/accept", response_model=SuggestionRecordOut)
+def accept(
+    suggestion_id: int,
+    request: Request,
+    playbooks: list[Playbook] = Depends(get_playbooks),
+) -> SuggestionRecordOut:
+    by_id = {pb.id: pb for pb in playbooks}
+
+    def lookup(pb_id: str) -> Path | None:
+        pb = by_id.get(pb_id)
+        return pb.path if pb else None
+
+    try:
+        record = suggestions_store.accept_suggestion(
+            suggestion_id, playbook_path_lookup=lookup
+        )
+    except suggestions_store.SuggestionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+    # Refresh the in-memory playbook so the API serves the new content
+    # immediately. Invalidate the embedding index too — body changed.
+    for i, pb in enumerate(playbooks):
+        if pb.id == record.playbook_id:
+            playbooks[i] = load_playbook(pb.path)
+            break
+    request.app.state.index = None
+
+    return _to_out(record)
+
+
+@router.put("/{suggestion_id}/reject", response_model=SuggestionRecordOut)
+def reject(suggestion_id: int) -> SuggestionRecordOut:
+    try:
+        record = suggestions_store.reject_suggestion(suggestion_id)
+    except suggestions_store.SuggestionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    return _to_out(record)
