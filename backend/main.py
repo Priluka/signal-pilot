@@ -52,7 +52,13 @@ async def lifespan(app: FastAPI):
     paths = discover_playbook_paths(config.PLAYBOOKS_DIR)
     app.state.playbooks = [load_playbook(p) for p in paths]
     app.state.tickets = _load_ticket_sample(config.TICKET_SAMPLE_FILE)
-    app.state.index = None  # built lazily on first retrieval request
+    # Build the embedding index eagerly so the first burst of frontend
+    # requests doesn't race to build it and exhaust the worker thread pool.
+    # Cached .npz means this is near-instant on every restart after the
+    # first one.
+    from core.retrieval import build_index
+
+    app.state.index = build_index()
     yield
 
 
