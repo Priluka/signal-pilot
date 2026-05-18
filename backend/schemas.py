@@ -275,7 +275,7 @@ class AgentActivityEvent(BaseModel):
 
     timestamp: str
     ticket_id: str
-    event_type: str  # classified | retrieved | drafted | approved | edited | rejected | skipped
+    event_type: str  # classified | retrieved | drafted | approved | edited | rejected | skipped | suggestion_created | suggestion_accepted | suggestion_rejected
     detail: str
 
 
@@ -333,9 +333,14 @@ class SuggestionRequest(BaseModel):
     playbook_id: str
     section: str
     step_number: int | None = None
-    old_text: str
-    new_text: str
+    old_text: str = ""
+    new_text: str = ""
     author: str = "anonymous"
+    # New as of v0.8: suggestion type. Defaults to 'edit' so older clients
+    # keep working without changes.
+    type: str = "edit"  # 'edit' | 'add' | 'remove'
+    # Only used by type='add'. Format: 'end' or 'after:N' (1-indexed).
+    position: str | None = None
 
 
 class SuggestionRecordOut(BaseModel):
@@ -348,6 +353,9 @@ class SuggestionRecordOut(BaseModel):
     author: str
     status: str
     timestamp: str
+    decided_at: str | None = None
+    type: str = "edit"
+    position: str | None = None
 
 
 class SuggestionStats(BaseModel):
@@ -355,3 +363,24 @@ class SuggestionStats(BaseModel):
     accepted: int = 0
     rejected: int = 0
     total: int = 0
+
+
+# --- Jira ------------------------------------------------------------------
+class JiraTicketSummary(TicketSummary):
+    """Identical shape to TicketSummary — separate class only for the OpenAPI tag."""
+
+
+class JiraTicketDetail(TicketDetail):
+    pass
+
+
+class JiraCommentRequest(BaseModel):
+    issue_key: str
+    body: str
+
+
+class JiraCommentResponse(BaseModel):
+    id: str
+    issue_key: str
+    created: str | None = None
+    author: str | None = None

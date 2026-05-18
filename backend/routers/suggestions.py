@@ -26,24 +26,34 @@ def _to_out(r: suggestions_store.SuggestionRecord) -> SuggestionRecordOut:
         author=r.author,
         status=r.status,
         timestamp=r.timestamp,
+        decided_at=r.decided_at,
+        type=r.type,
+        position=r.position,
     )
 
 
 @router.post("", response_model=SuggestionRecordOut)
 def submit_suggestion(req: SuggestionRequest) -> SuggestionRecordOut:
-    if not req.playbook_id.strip() or not req.old_text or not req.new_text.strip():
+    if not req.playbook_id.strip():
+        raise HTTPException(status_code=422, detail="playbook_id is required")
+    if req.type not in ("edit", "add", "remove"):
         raise HTTPException(
             status_code=422,
-            detail="playbook_id, old_text, and new_text are required",
+            detail=f"type must be one of edit/add/remove, got {req.type!r}",
         )
-    record = suggestions_store.record_suggestion(
-        playbook_id=req.playbook_id,
-        section=req.section,
-        step_number=req.step_number,
-        old_text=req.old_text,
-        new_text=req.new_text,
-        author=req.author or "anonymous",
-    )
+    try:
+        record = suggestions_store.record_suggestion(
+            playbook_id=req.playbook_id,
+            section=req.section,
+            step_number=req.step_number,
+            old_text=req.old_text,
+            new_text=req.new_text,
+            author=req.author or "anonymous",
+            type=req.type,  # type: ignore[arg-type]
+            position=req.position,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _to_out(record)
 
 

@@ -9,7 +9,13 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { deleteAgentSession, getAgentSession, submitFeedback } from '../lib/api';
+import {
+  deleteAgentSession,
+  getAgentSession,
+  postJiraComment,
+  processJiraTicket,
+  submitFeedback,
+} from '../lib/api';
 import type {
   AgentSessionDetail,
   AgentStatus,
@@ -22,9 +28,16 @@ import { Chip, SectionHeading } from './ui';
 
 
 type FeedbackKind = 'approved' | 'edited' | 'rejected';
+export type TicketSource = 'local' | 'jira';
 
 
-export function AgentTicketDetail({ ticket }: { ticket: TicketDetail }) {
+export function AgentTicketDetail({
+  ticket,
+  source = 'local',
+}: {
+  ticket: TicketDetail;
+  source?: TicketSource;
+}) {
   const [session, setSession] = useState<AgentSessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +46,8 @@ export function AgentTicketDetail({ ticket }: { ticket: TicketDetail }) {
   const [editedText, setEditedText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [processing, setProcessing] = useState(false);
+  const [processError, setProcessError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,17 +91,27 @@ export function AgentTicketDetail({ ticket }: { ticket: TicketDetail }) {
     if (!session?.draft || !session.draft_playbook_id) return;
     setSubmitting(true);
     setSubmitError(null);
+    const finalText =
+      kind === 'rejected'
+        ? null
+        : kind === 'edited' || editedText !== session.draft.draft
+        ? editedText
+        : null;
     try {
+      // For Jira tickets, post the comment first — if Jira rejects it, we
+      // surface that error and DON'T log the local feedback, so the operator
+      // can retry. Local-only flows skip this step.
+      if (source === 'jira' && kind !== 'rejected') {
+        await postJiraComment({
+          issue_key: ticket.key,
+          body: finalText ?? session.draft.draft,
+        });
+      }
       await submitFeedback({
         ticket_id: ticket.key,
         playbook_id: session.draft_playbook_id,
         draft_text: session.draft.draft,
-        final_text:
-          kind === 'rejected'
-            ? null
-            : kind === 'edited' || editedText !== session.draft.draft
-            ? editedText
-            : null,
+        final_text: finalText,
         status: kind,
       });
       setEditing(false);
@@ -95,6 +120,24 @@ export function AgentTicketDetail({ ticket }: { ticket: TicketDetail }) {
       setSubmitError((err as Error).message);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function processNow() {
+    setProcessing(true);
+    setProcessError(null);
+    try {
+      const s =
+        source === 'jira' ? await processJiraTicket(ticket.key) : null;
+      if (s) {
+        setSession(s);
+        setEditedText(s.edited_text ?? s.draft?.draft ?? '');
+        window.dispatchEvent(new Event('agent-sessions-changed'));
+      }
+    } catch (err) {
+      setProcessError((err as Error).message);
+    } finally {
+      setProcessing(false);
     }
   }
 
@@ -229,7 +272,24 @@ export function AgentTicketDetail({ ticket }: { ticket: TicketDetail }) {
           </>
         )}
 
-        {!loading && !session && (
+        {!loading && !session && source === 'jira' && (
+          <div className="border border-panel-border bg-slate-50/60 rounded-lg px-4 py-6 text-sm text-slate-700 text-center space-y-3">
+            <p>This Jira ticket hasn't been processed by the agent yet.</p>
+            <button
+              type="button"
+              onClick={processNow}
+              disabled={processing}
+              className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-60"
+            >
+              {processing ? 'Classifying → retrieving → drafting…' : 'Process with agent'}
+            </button>
+            {processError && (
+              <p className="text-[11px] text-red-600">{processError}</p>
+            )}
+          </div>
+        )}
+
+        {!loading && !session && source === 'local' && (
           <div className="border border-panel-border bg-slate-50/60 rounded-lg px-4 py-6 text-sm text-slate-500 text-center">
             Agent hasn't reached this ticket yet — wait for the batch to
             finish.

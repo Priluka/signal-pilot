@@ -6,7 +6,7 @@
  * once a ticket is decided).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { AgentMetricsBar } from '../components/AgentMetricsBar';
 import { AgentStatusPill } from '../components/AgentStatusPill';
@@ -29,7 +29,13 @@ import type {
 } from '../lib/types';
 
 
-const TYPE_FILTERS: Array<{ key: AgentEventType | 'all'; label: string }> = [
+// 'suggestions' is a meta-filter that matches any of the three
+// suggestion_* event types — the operator usually wants to see them
+// together, not one type at a time.
+type TypeFilter = AgentEventType | 'all' | 'suggestions';
+
+
+const TYPE_FILTERS: Array<{ key: TypeFilter; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'classified', label: 'Classified' },
   { key: 'retrieved', label: 'Retrieved' },
@@ -37,7 +43,20 @@ const TYPE_FILTERS: Array<{ key: AgentEventType | 'all'; label: string }> = [
   { key: 'approved', label: 'Approved' },
   { key: 'rejected', label: 'Rejected' },
   { key: 'skipped', label: 'Skipped' },
+  { key: 'suggestions', label: 'Suggestions' },
 ];
+
+
+function matchesFilter(eventType: AgentEventType, filter: TypeFilter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'suggestions') return eventType.startsWith('suggestion_');
+  return eventType === filter;
+}
+
+
+function isSuggestionEvent(eventType: AgentEventType): boolean {
+  return eventType.startsWith('suggestion_');
+}
 
 
 interface TicketGroup {
@@ -59,7 +78,7 @@ export function ActivityLogPage() {
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState<AgentEventType | 'all'>('all');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const [activeTicket, setActiveTicket] = useState<TicketDetail | null>(null);
@@ -178,7 +197,9 @@ export function ActivityLogPage() {
   const filteredGroups = useMemo(() => {
     let rows = groups;
     if (typeFilter !== 'all') {
-      rows = rows.filter((g) => g.events.some((e) => e.event_type === typeFilter));
+      rows = rows.filter((g) =>
+        g.events.some((e) => matchesFilter(e.event_type, typeFilter)),
+      );
     }
     if (search.trim()) {
       const needle = search.toLowerCase();
@@ -289,7 +310,48 @@ const EVENT_DOT: Record<AgentEventType, string> = {
   edited: 'bg-indigo-500',
   rejected: 'bg-red-500',
   skipped: 'bg-slate-400',
+  // Suggestions get their own purple so the operator can pick them out at
+  // a glance from the agent-step events above.
+  suggestion_created: 'bg-purple-500',
+  suggestion_accepted: 'bg-purple-600',
+  suggestion_rejected: 'bg-purple-400',
 };
+
+
+function labelForEvent(eventType: AgentEventType): string {
+  switch (eventType) {
+    case 'edited':
+      return 'Approved (edited)';
+    case 'suggestion_created':
+      return 'suggestion · created';
+    case 'suggestion_accepted':
+      return 'suggestion · accepted';
+    case 'suggestion_rejected':
+      return 'suggestion · rejected';
+    default:
+      return eventType;
+  }
+}
+
+
+function PencilIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
 
 
 function TicketActivityCard({
@@ -315,6 +377,11 @@ function TicketActivityCard({
     !group.session.feedback_status &&
     group.session.derived_status !== 'auto_resolved' &&
     group.session.derived_status !== 'skipped';
+
+  // A group whose events are all suggestion lifecycle events belongs to a
+  // playbook, not a ticket — the right-hand detail panel can't render it.
+  const isPlaybookOnly =
+    group.events.length > 0 && group.events.every((e) => isSuggestionEvent(e.event_type));
 
   return (
     <div
@@ -343,18 +410,35 @@ function TicketActivityCard({
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
-        <button
-          type="button"
-          onClick={onOpen}
-          className="text-[12px] font-mono text-blue-600 hover:text-blue-800 hover:underline"
-        >
-          {group.ticket_id}
-        </button>
-        <AgentStatusPill status={status} />
+        {isPlaybookOnly ? (
+          <Link
+            to={`/knowledge/${group.ticket_id}`}
+            className="text-[12px] font-mono text-purple-700 hover:text-purple-900 hover:underline flex items-center gap-1.5"
+            title="Open playbook"
+          >
+            <PencilIcon className="text-purple-500" />
+            {group.ticket_id}
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpen}
+            className="text-[12px] font-mono text-blue-600 hover:text-blue-800 hover:underline"
+          >
+            {group.ticket_id}
+          </button>
+        )}
+        {isPlaybookOnly ? (
+          <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium border rounded bg-purple-50 text-purple-700 border-purple-200">
+            playbook
+          </span>
+        ) : (
+          <AgentStatusPill status={status} />
+        )}
         <span className="text-[11px] text-slate-500 font-mono">
           {formatTimeOfDay(group.latest_at)}
         </span>
-        {confidence != null && (
+        {!isPlaybookOnly && confidence != null && (
           <span className="text-[11px] text-slate-500 font-mono">
             conf {confidence.toFixed(2)}
           </span>
@@ -374,14 +458,30 @@ function TicketActivityCard({
                 {formatTime(e.timestamp)}
               </span>
               <span className="flex items-center justify-center">
-                <span
-                  className={`inline-block w-2 h-2 rounded-full ${EVENT_DOT[e.event_type]}`}
-                />
+                {isSuggestionEvent(e.event_type) ? (
+                  <PencilIcon
+                    className={
+                      e.event_type === 'suggestion_accepted'
+                        ? 'text-purple-600'
+                        : e.event_type === 'suggestion_rejected'
+                        ? 'text-purple-400'
+                        : 'text-purple-500'
+                    }
+                  />
+                ) : (
+                  <span
+                    className={`inline-block w-2 h-2 rounded-full ${EVENT_DOT[e.event_type]}`}
+                  />
+                )}
               </span>
-              <span className="text-[12px] text-slate-700 capitalize">
-                {e.event_type === 'edited'
-                  ? 'Approved (edited)'
-                  : e.event_type}
+              <span
+                className={`text-[12px] ${
+                  isSuggestionEvent(e.event_type)
+                    ? 'text-purple-700'
+                    : 'text-slate-700'
+                }`}
+              >
+                {labelForEvent(e.event_type)}
               </span>
               <span className="text-[13px] text-slate-700 leading-relaxed truncate">
                 {e.detail}

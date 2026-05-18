@@ -115,6 +115,26 @@ export function KnowledgePage() {
     };
   }, [slug]);
 
+  // When a suggestion is accepted elsewhere (Suggestions page or Suggestions
+  // tab inside this view), the playbook markdown on disk has changed — the
+  // accepting code invalidates the fetch cache, and we re-pull both the list
+  // (in case summary fields changed) and the open detail so the operator
+  // sees the new content immediately, no manual refresh.
+  useEffect(() => {
+    function refetch() {
+      listPlaybooks()
+        .then((data) => setAllPlaybooks(data))
+        .catch(() => {});
+      if (slug) {
+        getPlaybook(slug)
+          .then((data) => setDetail(data))
+          .catch(() => {});
+      }
+    }
+    window.addEventListener('suggestions-changed', refetch);
+    return () => window.removeEventListener('suggestions-changed', refetch);
+  }, [slug]);
+
   return (
     <div className="h-full flex flex-col">
       <header className="px-6 py-4 border-b border-panel-border bg-panel-surface">

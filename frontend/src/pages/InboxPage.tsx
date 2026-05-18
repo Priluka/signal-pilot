@@ -1,7 +1,11 @@
-/** Inbox view — only tickets that need a human decision (escalated +
- * needs_review). Approved / rejected / auto-resolved / skipped do not show
- * here; they live in the Activity Log. When the inbox empties, the right
- * panel renders the "All caught up" state.
+/** Inbox view — operator decision queue.
+ *
+ * Two sources, switched by tabs:
+ *   * Local — the JSONL sample. Only tickets where the agent's derived
+ *     status is needs_review / escalated appear. Approve = log feedback.
+ *   * Jira — live tickets from the configured Jira project. All tickets
+ *     show until the operator processes them. Approve = post a comment to
+ *     Jira AND log feedback.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -15,8 +19,10 @@ import { AgentTicketDetail } from '../components/AgentTicketDetail';
 import {
   getAgentBatchStatus,
   getAgentMetrics,
+  getJiraTicket,
   getTicket,
   listAgentSessions,
+  listJiraTickets,
   listTickets,
   startAgentBatch,
 } from '../lib/api';
@@ -31,13 +37,32 @@ import type {
 
 
 const NEEDS_ATTENTION = new Set<AgentStatus>(['needs_review', 'escalated']);
+type Source = 'local' | 'jira';
 
 
 export function InboxPage() {
   const { ticketKey } = useParams();
   const navigate = useNavigate();
 
-  const [tickets, setTickets] = useState<TicketSummary[]>([]);
+  // Hold the active source in localStorage so the tab choice survives
+  // page reloads + cross-tab navigation.
+  const [source, setSourceState] = useState<Source>(() => {
+    const stored = typeof window !== 'undefined'
+      ? window.localStorage.getItem('inboxSource')
+      : null;
+    return stored === 'jira' ? 'jira' : 'local';
+  });
+  const setSource = useCallback((s: Source) => {
+    setSourceState(s);
+    try {
+      window.localStorage.setItem('inboxSource', s);
+    } catch {
+      /* private-mode safe */
+    }
+  }, []);
+
+  // --- Local tickets -----------------------------------------------------
+  const [localTickets, setLocalTickets] = useState<TicketSummary[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
   const [ticketsError, setTicketsError] = useState<string | null>(null);
 
@@ -45,6 +70,11 @@ export function InboxPage() {
   const [metrics, setMetrics] = useState<AgentMetrics | null>(null);
   const [batch, setBatch] = useState<BatchStatus | null>(null);
   const [initialLoaded, setInitialLoaded] = useState(false);
+
+  // --- Jira tickets ------------------------------------------------------
+  const [jiraTickets, setJiraTickets] = useState<TicketSummary[]>([]);
+  const [jiraLoading, setJiraLoading] = useState(false);
+  const [jiraError, setJiraError] = useState<string | null>(null);
 
   const [activeTicket, setActiveTicket] = useState<TicketDetail | null>(null);
   const [activeLoading, setActiveLoading] = useState(false);
@@ -55,19 +85,26 @@ export function InboxPage() {
       setSessions(s);
       setMetrics(m);
     } catch {
-      // Swallow — the periodic poll will try again on the next tick.
+      // Periodic poll retries on the next tick.
     } finally {
-      // We let the page out of its loading state on first attempt regardless
-      // of outcome, so a failed metrics fetch doesn't trap the operator in
-      // an infinite spinner.
       setInitialLoaded(true);
     }
   }, []);
 
-  // Track batch progress (poll only while it's actively running) and refresh
-  // sessions+metrics on demand or on agent-sessions-changed events. The batch
-  // is NOT auto-started on mount — the operator triggers it explicitly so
-  // background work is bounded.
+  const refreshJira = useCallback(async () => {
+    setJiraLoading(true);
+    setJiraError(null);
+    try {
+      const data = await listJiraTickets();
+      setJiraTickets(data);
+    } catch (err) {
+      setJiraError((err as Error).message);
+    } finally {
+      setJiraLoading(false);
+    }
+  }, []);
+
+  // Local: tickets + batch polling + session refresh on agent-sessions-changed.
   useEffect(() => {
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -75,7 +112,7 @@ export function InboxPage() {
     setTicketsLoading(true);
     listTickets()
       .then((data) => {
-        if (!cancelled) setTickets(data);
+        if (!cancelled) setLocalTickets(data);
       })
       .catch((err: Error) => {
         if (!cancelled) setTicketsError(err.message);
@@ -84,8 +121,6 @@ export function InboxPage() {
         if (!cancelled) setTicketsLoading(false);
       });
 
-    // One-shot read of batch status so we can show the right CTA / progress
-    // bar without starting anything.
     getAgentBatchStatus()
       .then((b) => {
         if (cancelled) return;
@@ -102,7 +137,7 @@ export function InboxPage() {
                 intervalId = null;
               }
             } catch {
-              // transient
+              /* transient */
             }
           }, 2000);
         }
@@ -110,7 +145,12 @@ export function InboxPage() {
       .catch(() => {});
 
     refresh();
-    const handler = () => refresh();
+    const handler = () => {
+      refresh();
+      // Sessions changed (typically post-approve) — also refresh Jira list
+      // so its derived statuses update.
+      if (source === 'jira') refreshJira();
+    };
     window.addEventListener('agent-sessions-changed', handler);
 
     return () => {
@@ -118,7 +158,12 @@ export function InboxPage() {
       window.removeEventListener('agent-sessions-changed', handler);
       if (intervalId) clearInterval(intervalId);
     };
-  }, [refresh]);
+  }, [refresh, refreshJira, source]);
+
+  // Jira: fetch once on switch, refetch on agent-sessions-changed (handled above).
+  useEffect(() => {
+    if (source === 'jira') refreshJira();
+  }, [source, refreshJira]);
 
   async function triggerBatch() {
     try {
@@ -129,6 +174,7 @@ export function InboxPage() {
     }
   }
 
+  // Ticket detail fetch — routes through the right backend depending on source.
   useEffect(() => {
     if (!ticketKey) {
       setActiveTicket(null);
@@ -136,7 +182,8 @@ export function InboxPage() {
     }
     let cancelled = false;
     setActiveLoading(true);
-    getTicket(ticketKey)
+    const fetcher = source === 'jira' ? getJiraTicket : getTicket;
+    fetcher(ticketKey)
       .then((data) => {
         if (!cancelled) setActiveTicket(data);
       })
@@ -149,7 +196,7 @@ export function InboxPage() {
     return () => {
       cancelled = true;
     };
-  }, [ticketKey]);
+  }, [ticketKey, source]);
 
   const sessionByTicketId = useMemo(() => {
     const m = new Map<string, AgentSessionSummary>();
@@ -157,8 +204,8 @@ export function InboxPage() {
     return m;
   }, [sessions]);
 
-  const inboxRows: InboxRow[] = useMemo(() => {
-    const annotated: InboxRow[] = tickets.map((t) => ({
+  const localInboxRows: InboxRow[] = useMemo(() => {
+    const annotated: InboxRow[] = localTickets.map((t) => ({
       ticket: t,
       session: sessionByTicketId.get(t.key),
     }));
@@ -167,23 +214,45 @@ export function InboxPage() {
         r.session ? NEEDS_ATTENTION.has(r.session.derived_status) : false,
       ),
     );
-  }, [tickets, sessionByTicketId]);
+  }, [localTickets, sessionByTicketId]);
 
-  // Auto-select first inbox ticket when no key in URL.
+  // Jira shows ALL tickets — agent state appears once the operator processes
+  // each one, and any decided ticket still stays visible (its session pill
+  // shows "approved" / "rejected").
+  const jiraInboxRows: InboxRow[] = useMemo(() => {
+    return jiraTickets.map((t) => ({
+      ticket: t,
+      session: sessionByTicketId.get(t.key),
+    }));
+  }, [jiraTickets, sessionByTicketId]);
+
+  const inboxRows = source === 'jira' ? jiraInboxRows : localInboxRows;
+  const rowsLoading = source === 'jira' ? jiraLoading : ticketsLoading;
+  const rowsError = source === 'jira' ? jiraError : ticketsError;
+
+  // Clear selection when switching tabs so we don't show a /tickets ticket
+  // under the Jira tab or vice versa.
+  useEffect(() => {
+    if (ticketKey) navigate('/inbox', { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source]);
+
+  // Auto-select first row when no key in URL.
   useEffect(() => {
     if (ticketKey) return;
     if (inboxRows.length === 0) return;
     navigate(`/inbox/${inboxRows[0].ticket.key}`, { replace: true });
   }, [ticketKey, inboxRows, navigate]);
 
-  // After a decision, the active ticket leaves the inbox — clear it.
+  // After a local decision the ticket leaves the inbox; for Jira we keep it.
   useEffect(() => {
+    if (source !== 'local') return;
     if (!ticketKey) return;
     const still = inboxRows.some((r) => r.ticket.key === ticketKey);
     if (!still) {
       navigate('/inbox', { replace: true });
     }
-  }, [inboxRows, ticketKey, navigate]);
+  }, [inboxRows, ticketKey, navigate, source]);
 
   const escalated = metrics?.escalated ?? 0;
   const needsReview = metrics?.needs_review ?? 0;
@@ -197,26 +266,41 @@ export function InboxPage() {
     <div className="h-full flex flex-col">
       <header className="px-6 py-3 border-b border-panel-border bg-panel-surface space-y-2">
         <div className="flex items-center justify-between gap-4">
-          <div>
+          <div className="flex items-center gap-3">
             <h1 className="text-lg font-semibold tracking-tight text-slate-900">
               Inbox
             </h1>
-            <p className="text-sm text-slate-600 mt-0.5">
-              {totalPending === 0
-                ? 'All caught up — no tickets need your attention.'
-                : `${totalPending} ticket${totalPending === 1 ? '' : 's'} need your attention (${escalated} escalated, ${needsReview} needs review)`}
-            </p>
+            <div className="flex items-center gap-1">
+              <SourceTab
+                active={source === 'local'}
+                onClick={() => setSource('local')}
+                label="Local tickets"
+                count={localTickets.length}
+              />
+              <SourceTab
+                active={source === 'jira'}
+                onClick={() => setSource('jira')}
+                label="Jira tickets"
+                count={jiraTickets.length}
+              />
+            </div>
           </div>
           <div className="flex items-center gap-x-5 text-[11px]">
-            <Metric label="Processed" value={`${totalProcessed}`} />
-            <Metric label="Pending" value={`${totalPending}`} tone="text-amber-700" />
-            <Metric
-              label="Approval rate"
-              value={metrics && metrics.approved + metrics.rejected > 0 ? `${approvalRate}%` : '—'}
-            />
+            {source === 'local' ? (
+              <>
+                <Metric label="Processed" value={`${totalProcessed}`} />
+                <Metric label="Pending" value={`${totalPending}`} tone="text-amber-700" />
+                <Metric
+                  label="Approval rate"
+                  value={metrics && metrics.approved + metrics.rejected > 0 ? `${approvalRate}%` : '—'}
+                />
+              </>
+            ) : (
+              <Metric label="Total in KAN" value={`${jiraTickets.length}`} />
+            )}
           </div>
         </div>
-        {batch?.running ? (
+        {source === 'local' && batch?.running ? (
           <div className="flex items-center gap-2 text-[11px] text-blue-700">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
             Processing tickets… {batch.processed} / {batch.total}
@@ -224,7 +308,7 @@ export function InboxPage() {
               <span className="font-mono text-slate-500">{batch.current_ticket}</span>
             )}
           </div>
-        ) : metrics && metrics.processed < metrics.total ? (
+        ) : source === 'local' && metrics && metrics.processed < metrics.total ? (
           <div className="flex items-center gap-3 text-[11px]">
             <span className="text-slate-500">
               {metrics.total - metrics.processed} ticket{metrics.total - metrics.processed === 1 ? '' : 's'} not yet processed by the agent.
@@ -238,27 +322,49 @@ export function InboxPage() {
             </button>
           </div>
         ) : null}
+        {source === 'jira' && (
+          <p className="text-[11px] text-slate-500">
+            Live from your Jira project. Pick a ticket and click{' '}
+            <span className="font-medium text-slate-700">Process with agent</span>{' '}
+            to classify → retrieve → draft. Approve writes the draft as a Jira
+            comment.
+          </p>
+        )}
       </header>
       <div className="flex-1 flex overflow-hidden">
-        {!initialLoaded || ticketsLoading ? (
+        {source === 'local' && (!initialLoaded || rowsLoading) ? (
           <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
             Loading inbox…
           </div>
+        ) : source === 'jira' && rowsLoading && jiraTickets.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
+            Loading Jira tickets…
+          </div>
+        ) : source === 'jira' && rowsError ? (
+          <div className="flex-1 flex items-center justify-center text-sm text-red-600 px-8 text-center">
+            {rowsError}
+          </div>
         ) : inboxRows.length === 0 ? (
-          <AllCaughtUp running={batch?.running ?? false} processed={batch?.processed ?? 0} total={batch?.total ?? 0} />
+          source === 'local' ? (
+            <AllCaughtUp running={batch?.running ?? false} processed={batch?.processed ?? 0} total={batch?.total ?? 0} />
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
+              No tickets in this Jira project.
+            </div>
+          )
         ) : (
           <>
             <AgentInbox
               rows={inboxRows}
               loading={false}
-              error={ticketsError}
+              error={rowsError}
             />
             {activeLoading ? (
               <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
                 Loading ticket…
               </div>
             ) : activeTicket ? (
-              <AgentTicketDetail ticket={activeTicket} />
+              <AgentTicketDetail ticket={activeTicket} source={source} />
             ) : (
               <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
                 Pick a ticket from the inbox.
@@ -268,6 +374,34 @@ export function InboxPage() {
         )}
       </div>
     </div>
+  );
+}
+
+
+function SourceTab({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-1.5 px-3 py-1 text-sm rounded-md transition-colors ${
+        active
+          ? 'bg-white text-slate-900 font-medium border border-slate-200 shadow-sm'
+          : 'text-slate-600 hover:bg-white/60 hover:text-slate-900 border border-transparent'
+      }`}
+    >
+      <span>{label}</span>
+      <span className="text-[11px] font-mono text-slate-400 tabular-nums">({count})</span>
+    </button>
   );
 }
 

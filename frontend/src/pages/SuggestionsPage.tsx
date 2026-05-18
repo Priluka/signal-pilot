@@ -16,6 +16,7 @@ import {
   listSuggestions,
   rejectSuggestion,
 } from '../lib/api';
+import { invalidate } from '../lib/cache';
 import type { PlaybookSummary, SuggestionRecord } from '../lib/types';
 
 
@@ -62,6 +63,11 @@ export function SuggestionsPage() {
     try {
       const updated = await acceptSuggestion(s.id);
       setSuggestions((prev) => prev.map((x) => (x.id === s.id ? updated : x)));
+      // The playbook markdown on disk just changed — purge the in-memory
+      // fetch cache so the Knowledge Library re-fetches fresh content
+      // instead of showing the pre-accept version.
+      invalidate('playbooks');
+      invalidate(`playbook:${s.playbook_id}`);
       window.dispatchEvent(new Event('suggestions-changed'));
       toast.success(`#${s.id} accepted · committed to repo`);
     } catch (err) {
@@ -171,6 +177,8 @@ function SuggestionRow({
   onReject: () => void;
 }) {
   const isPending = suggestion.status === 'pending';
+  const kind = suggestion.type ?? 'edit';
+  const isBullet = suggestion.section === 'when_applies';
   return (
     <li className="bg-panel-surface border border-panel-border rounded-lg p-4">
       <div className="flex items-start justify-between gap-3 mb-3">
@@ -182,6 +190,7 @@ function SuggestionRow({
             {playbookTitle ?? suggestion.playbook_id}
           </Link>
           <div className="mt-0.5 flex items-center gap-2 text-[11px] text-slate-500">
+            <KindBadge kind={kind} isBullet={isBullet} />
             <span className="font-mono">{suggestion.playbook_id}</span>
             <span className="text-slate-300">·</span>
             <span>
@@ -197,20 +206,7 @@ function SuggestionRow({
         <StatusPill status={suggestion.status} />
       </div>
 
-      <div className="space-y-1">
-        <div className="flex items-start gap-2 bg-red-50 border-l-2 border-red-300 px-3 py-2 rounded">
-          <span className="text-red-500 font-mono text-xs mt-0.5 select-none">−</span>
-          <span className="text-sm text-slate-700 line-through decoration-red-400/70 whitespace-pre-wrap leading-relaxed flex-1">
-            {suggestion.old_text}
-          </span>
-        </div>
-        <div className="flex items-start gap-2 bg-emerald-50 border-l-2 border-emerald-300 px-3 py-2 rounded">
-          <span className="text-emerald-600 font-mono text-xs mt-0.5 select-none">+</span>
-          <span className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed flex-1">
-            {suggestion.new_text}
-          </span>
-        </div>
-      </div>
+      <SuggestionBody suggestion={suggestion} />
 
       {isPending && (
         <div className="mt-3 flex items-center justify-end gap-2">
@@ -233,6 +229,71 @@ function SuggestionRow({
         </div>
       )}
     </li>
+  );
+}
+
+
+function KindBadge({ kind, isBullet }: { kind: 'edit' | 'add' | 'remove'; isBullet: boolean }) {
+  if (kind === 'edit') {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider border rounded bg-blue-50 text-blue-700 border-blue-200">
+        edit
+      </span>
+    );
+  }
+  if (kind === 'add') {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider border rounded bg-emerald-50 text-emerald-700 border-emerald-200">
+        {isBullet ? 'New condition' : 'New step'}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider border rounded bg-red-50 text-red-700 border-red-200">
+      Removal
+    </span>
+  );
+}
+
+
+function SuggestionBody({ suggestion }: { suggestion: SuggestionRecord }) {
+  const kind = suggestion.type ?? 'edit';
+  if (kind === 'add') {
+    return (
+      <div className="flex items-start gap-2 bg-emerald-50 border-l-2 border-emerald-300 px-3 py-2 rounded">
+        <span className="text-emerald-600 font-mono text-xs mt-0.5 select-none">+</span>
+        <span className="text-sm text-emerald-900 whitespace-pre-wrap leading-relaxed flex-1">
+          {suggestion.new_text}
+        </span>
+      </div>
+    );
+  }
+  if (kind === 'remove') {
+    return (
+      <div className="flex items-start gap-2 bg-red-50 border-l-2 border-red-300 px-3 py-2 rounded">
+        <span className="text-red-500 font-mono text-xs mt-0.5 select-none">−</span>
+        <span className="text-sm text-red-900 line-through decoration-red-500/70 whitespace-pre-wrap leading-relaxed flex-1">
+          {suggestion.old_text}
+        </span>
+      </div>
+    );
+  }
+  // edit
+  return (
+    <div className="space-y-1">
+      <div className="flex items-start gap-2 bg-red-50 border-l-2 border-red-300 px-3 py-2 rounded">
+        <span className="text-red-500 font-mono text-xs mt-0.5 select-none">−</span>
+        <span className="text-sm text-slate-700 line-through decoration-red-400/70 whitespace-pre-wrap leading-relaxed flex-1">
+          {suggestion.old_text}
+        </span>
+      </div>
+      <div className="flex items-start gap-2 bg-emerald-50 border-l-2 border-emerald-300 px-3 py-2 rounded">
+        <span className="text-emerald-600 font-mono text-xs mt-0.5 select-none">+</span>
+        <span className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed flex-1">
+          {suggestion.new_text}
+        </span>
+      </div>
+    </div>
   );
 }
 

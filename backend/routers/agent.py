@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from core import agent_runner, agent_sessions
+from core import suggestions as suggestions_store
 from core.classifier import classify_ticket
 from core.drafter import draft_reply
 from core.retrieval import (
@@ -310,6 +311,30 @@ def list_activity(limit: int = 500) -> list[AgentActivityEvent]:
                     ticket_id=s.ticket_id,
                     event_type=s.feedback_status,
                     detail=label_map.get(s.feedback_status, s.feedback_status),
+                )
+            )
+
+    # Suggestion lifecycle events — grouped under the playbook id so all
+    # activity for a given playbook shows up together in the log.
+    for sug in suggestions_store.list_suggestions():
+        step_str = f" · Step {sug.step_number}" if sug.step_number is not None else ""
+        section_str = sug.section.replace("_", " ")
+        verb = {"edit": "edit", "add": "add", "remove": "remove"}.get(sug.type, sug.type)
+        events.append(
+            AgentActivityEvent(
+                timestamp=sug.timestamp,
+                ticket_id=sug.playbook_id,
+                event_type="suggestion_created",
+                detail=f"#{sug.id} {verb} · {section_str}{step_str} · by {sug.author}",
+            )
+        )
+        if sug.status in ("accepted", "rejected") and sug.decided_at:
+            events.append(
+                AgentActivityEvent(
+                    timestamp=sug.decided_at,
+                    ticket_id=sug.playbook_id,
+                    event_type=f"suggestion_{sug.status}",
+                    detail=f"#{sug.id} {verb} · {section_str}{step_str}",
                 )
             )
 

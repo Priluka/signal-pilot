@@ -26,6 +26,10 @@ import type {
   FeedbackRequest,
   FeedbackStats,
   GraphResponse,
+  JiraCommentRequest,
+  JiraCommentResponse,
+  JiraTicketDetail,
+  JiraTicketSummary,
   PlaybookDetail,
   PlaybookSummary,
   RetrieveRequest,
@@ -108,6 +112,31 @@ export function getTicket(key: string): Promise<TicketDetail> {
   return cachedFetch(`ticket:${key}`, () =>
     json<TicketDetail>(`/tickets/${encodeURIComponent(key)}`),
   );
+}
+
+// --- Jira ------------------------------------------------------------------
+// Live data; no caching — the operator wants to see the current state of
+// their Jira board, not whatever we fetched five minutes ago.
+export function listJiraTickets(limit = 100): Promise<JiraTicketSummary[]> {
+  return json<JiraTicketSummary[]>(`/jira/tickets?limit=${limit}`);
+}
+
+export function getJiraTicket(issueKey: string): Promise<JiraTicketDetail> {
+  return json<JiraTicketDetail>(`/jira/tickets/${encodeURIComponent(issueKey)}`);
+}
+
+export function processJiraTicket(issueKey: string): Promise<AgentSessionDetail> {
+  return json<AgentSessionDetail>(
+    `/jira/process/${encodeURIComponent(issueKey)}`,
+    { method: 'POST' },
+  );
+}
+
+export function postJiraComment(req: JiraCommentRequest): Promise<JiraCommentResponse> {
+  return json<JiraCommentResponse>('/jira/comment', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
 }
 
 // --- Agent -----------------------------------------------------------------

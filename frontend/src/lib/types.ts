@@ -244,7 +244,10 @@ export type AgentEventType =
   | 'approved'
   | 'edited'
   | 'rejected'
-  | 'skipped';
+  | 'skipped'
+  | 'suggestion_created'
+  | 'suggestion_accepted'
+  | 'suggestion_rejected';
 
 export interface AgentActivityEvent {
   timestamp: string;
@@ -278,13 +281,19 @@ export interface FeedbackStats {
   total: number;
 }
 
+export type SuggestionKind = 'edit' | 'add' | 'remove';
+
 export interface SuggestionRequest {
   playbook_id: string;
   section: string;
-  step_number: number | null;
-  old_text: string;
-  new_text: string;
+  step_number?: number | null;
+  old_text?: string;
+  new_text?: string;
   author?: string;
+  /** 'edit' (default), 'add' to insert a new step/bullet, or 'remove' to delete one. */
+  type?: SuggestionKind;
+  /** Only meaningful for type='add'. Format: 'end' (append) or 'after:N' (1-indexed). */
+  position?: string | null;
 }
 
 export interface SuggestionRecord {
@@ -297,6 +306,9 @@ export interface SuggestionRecord {
   author: string;
   status: 'pending' | 'accepted' | 'rejected';
   timestamp: string;
+  decided_at?: string | null;
+  type?: SuggestionKind;
+  position?: string | null;
 }
 
 export interface SuggestionStats {
@@ -365,4 +377,20 @@ export interface ChatSessionDetail extends ChatSessionSummary {
   hits: RetrievalHitOut[];
   cited_ids: string[];
   error_message: string | null;
+}
+
+// Jira — same shape as TicketSummary / TicketDetail, just aliased for clarity.
+export type JiraTicketSummary = TicketSummary;
+export type JiraTicketDetail = TicketDetail;
+
+export interface JiraCommentRequest {
+  issue_key: string;
+  body: string;
+}
+
+export interface JiraCommentResponse {
+  id: string;
+  issue_key: string;
+  created: string | null;
+  author: string | null;
 }
