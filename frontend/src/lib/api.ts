@@ -37,6 +37,9 @@ import type {
   TicketSummary,
 } from './types';
 
+import { cachedFetch } from './cache';
+
+
 const API_BASE: string =
   (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000';
 
@@ -73,28 +76,38 @@ export function listPlaybooks(filters: PlaybookFilters = {}): Promise<PlaybookSu
     if (v) qs.set(k, v);
   }
   const tail = qs.toString() ? `?${qs}` : '';
+  // /playbooks (no filters) is the heaviest stable resource — every page
+  // mount used to refetch it. Cache the unfiltered case; filtered calls
+  // are rare and stay live.
+  if (!tail) {
+    return cachedFetch('playbooks', () => json<PlaybookSummary[]>('/playbooks'));
+  }
   return json<PlaybookSummary[]>(`/playbooks${tail}`);
 }
 
 export function getPlaybook(id: string): Promise<PlaybookDetail> {
-  return json<PlaybookDetail>(`/playbooks/${encodeURIComponent(id)}`);
+  return cachedFetch(`playbook:${id}`, () =>
+    json<PlaybookDetail>(`/playbooks/${encodeURIComponent(id)}`),
+  );
 }
 
 export function getCategories(): Promise<CategoriesResponse> {
-  return json<CategoriesResponse>('/categories');
+  return cachedFetch('categories', () => json<CategoriesResponse>('/categories'));
 }
 
 export function getGraph(): Promise<GraphResponse> {
-  return json<GraphResponse>('/playbooks/graph');
+  return cachedFetch('graph', () => json<GraphResponse>('/playbooks/graph'));
 }
 
 // --- Tickets ---------------------------------------------------------------
 export function listTickets(): Promise<TicketSummary[]> {
-  return json<TicketSummary[]>('/tickets');
+  return cachedFetch('tickets', () => json<TicketSummary[]>('/tickets'));
 }
 
 export function getTicket(key: string): Promise<TicketDetail> {
-  return json<TicketDetail>(`/tickets/${encodeURIComponent(key)}`);
+  return cachedFetch(`ticket:${key}`, () =>
+    json<TicketDetail>(`/tickets/${encodeURIComponent(key)}`),
+  );
 }
 
 // --- Agent -----------------------------------------------------------------
