@@ -136,7 +136,6 @@ Internal partner tickets requesting configuration of Android PPC handheld device
 - Device returned from external service/repair center (e.g. Inf Kod) requiring reconfiguration
 - Device requires hard reset and reinstallation of RAO application
 - New computer/workstation needs to be configured for web system access
-- test
 
 ## Typical resolution flow
 
