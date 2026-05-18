@@ -245,6 +245,10 @@ export interface GraphResponse {
 // SSE event payloads
 export interface ChatSourcesEvent {
   hits: RetrievalHitOut[];
+  /** Backend-assigned row id, present once the session row has been
+   * created (before the first delta arrives). null if the persistence
+   * write failed. */
+  session_id: number | null;
 }
 export interface ChatDeltaEvent {
   text: string;

@@ -161,16 +161,26 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
     setStatus('streaming');
 
     abortRef.current = streamChatAnswer(q, topK, {
-      onSources: (e) => setSources(e.hits),
+      onSources: (e) => {
+        setSources(e.hits);
+        // Pin the session_id to localStorage immediately so a refresh
+        // mid-stream restores the row (with whatever partial answer the
+        // backend has checkpointed at that moment).
+        if (e.session_id != null) {
+          setActiveSessionId(e.session_id);
+          writeString(LS_ACTIVE_ID, String(e.session_id));
+        }
+        // Also drop the draft now — the question is in flight, no point
+        // restoring it as a half-written textarea after refresh.
+        setQuestionState('');
+        writeString(LS_DRAFT, null);
+        window.dispatchEvent(new Event('chat-sessions-changed'));
+      },
       onDelta: (e) => setAnswer((prev) => prev + e.text),
       onDone: (e) => {
         setAnswer(e.answer);
         setActiveSessionId(e.session_id);
         if (e.session_id != null) writeString(LS_ACTIVE_ID, String(e.session_id));
-        // The draft is now in the history — clear the staged textarea so
-        // a refresh doesn't keep the same question hanging there.
-        setQuestionState('');
-        writeString(LS_DRAFT, null);
         setStatus('done');
         window.dispatchEvent(new Event('chat-sessions-changed'));
       },
