@@ -221,6 +221,18 @@ class AgentSessionDetail(BaseModel):
     updated_at: str
 
 
+class AgentSessionSummary(BaseModel):
+    """Compact per-ticket workflow state for the Agent Feed ticket list pill."""
+
+    ticket_id: str
+    has_classification: bool
+    classification_label: str | None = None
+    has_retrieval: bool
+    has_draft: bool
+    feedback_status: str | None = None
+    updated_at: str
+
+
 # --- Chat ------------------------------------------------------------------
 class ChatRequest(BaseModel):
     question: str

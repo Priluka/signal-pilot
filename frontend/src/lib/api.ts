@@ -7,6 +7,7 @@
  */
 import type {
   AgentSessionDetail,
+  AgentSessionSummary,
   CategoriesResponse,
   ChatDeltaEvent,
   ChatDoneEvent,
@@ -140,6 +141,10 @@ export async function getAgentSession(
   if (!res.ok) throw new Error(`${res.status} /agent/sessions/${ticketId}`);
   const body = await res.json();
   return body as AgentSessionDetail | null;
+}
+
+export function listAgentSessions(): Promise<AgentSessionSummary[]> {
+  return json<AgentSessionSummary[]>('/agent/sessions');
 }
 
 export async function deleteAgentSession(ticketId: string): Promise<void> {

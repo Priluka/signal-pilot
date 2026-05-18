@@ -177,6 +177,46 @@ export interface AgentSessionDetail {
   updated_at: string;
 }
 
+export interface AgentSessionSummary {
+  ticket_id: string;
+  has_classification: boolean;
+  classification_label: string | null;
+  has_retrieval: boolean;
+  has_draft: boolean;
+  feedback_status: 'approved' | 'edited' | 'rejected' | null;
+  updated_at: string;
+}
+
+/** Derived workflow stage for the Agent Feed ticket list pill. */
+export type AgentWorkflowState =
+  | 'not_started'
+  | 'classified'
+  | 'retrieved'
+  | 'drafted'
+  | 'approved'
+  | 'edited'
+  | 'rejected'
+  | 'auto_close';
+
+export function agentWorkflowState(
+  s: AgentSessionSummary | undefined,
+): AgentWorkflowState {
+  if (!s) return 'not_started';
+  if (s.feedback_status === 'approved') return 'approved';
+  if (s.feedback_status === 'edited') return 'edited';
+  if (s.feedback_status === 'rejected') return 'rejected';
+  if (
+    s.classification_label === 'internal_log' ||
+    s.classification_label === 'spam_or_junk'
+  ) {
+    return 'auto_close';
+  }
+  if (s.has_draft) return 'drafted';
+  if (s.has_retrieval) return 'retrieved';
+  if (s.has_classification) return 'classified';
+  return 'not_started';
+}
+
 export interface FeedbackRequest {
   ticket_id: string;
   playbook_id: string;

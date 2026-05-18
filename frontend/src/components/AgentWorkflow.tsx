@@ -150,6 +150,7 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
       .then((res) => {
         if (ticketRef.current !== myTicketKey) return;
         setClassification(res);
+        window.dispatchEvent(new Event('agent-sessions-changed'));
       })
       .catch((err: Error) => {
         if (ticketRef.current !== myTicketKey) return;
@@ -178,6 +179,7 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
       .then((res) => {
         if (ticketRef.current !== myTicketKey) return;
         setRetrieval(res);
+        window.dispatchEvent(new Event('agent-sessions-changed'));
       })
       .catch((err: Error) => {
         if (ticketRef.current !== myTicketKey) return;
@@ -231,6 +233,7 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
         if (ticketRef.current !== myTicketKey) return;
         setDraft(res);
         setEditedText(res.draft);
+        window.dispatchEvent(new Event('agent-sessions-changed'));
       })
       .catch((err: Error) => {
         if (ticketRef.current !== myTicketKey) return;
@@ -259,6 +262,7 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
         status,
       });
       setFeedbackStatus(status);
+      window.dispatchEvent(new Event('agent-sessions-changed'));
     } catch (err) {
       setFeedbackError((err as Error).message);
     } finally {
@@ -282,6 +286,7 @@ export function AgentWorkflow({ ticket, tickets }: Props) {
     setShowDiff(false);
     setFeedbackStatus(null);
     setSourcePlaybook(null);
+    window.dispatchEvent(new Event('agent-sessions-changed'));
   }
 
   function handleNextTicket() {

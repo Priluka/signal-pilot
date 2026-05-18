@@ -18,6 +18,7 @@ from core.retrieval import (
 from ..deps import get_playbook_index, get_playbooks
 from ..schemas import (
     AgentSessionDetail,
+    AgentSessionSummary,
     ClassifyRequest,
     ClassifyResponse,
     DraftRequest,
@@ -159,6 +160,24 @@ def _record_to_detail(r: agent_sessions.AgentSessionRecord) -> AgentSessionDetai
         feedback_status=r.feedback_status,
         updated_at=r.updated_at,
     )
+
+
+@router.get("/sessions", response_model=list[AgentSessionSummary])
+def list_agent_sessions() -> list[AgentSessionSummary]:
+    return [
+        AgentSessionSummary(
+            ticket_id=r.ticket_id,
+            has_classification=r.classification is not None,
+            classification_label=(
+                r.classification.get("label") if r.classification else None
+            ),
+            has_retrieval=r.retrieval is not None,
+            has_draft=r.draft is not None,
+            feedback_status=r.feedback_status,
+            updated_at=r.updated_at,
+        )
+        for r in agent_sessions.list_sessions()
+    ]
 
 
 @router.get("/sessions/{ticket_id}", response_model=AgentSessionDetail | None)

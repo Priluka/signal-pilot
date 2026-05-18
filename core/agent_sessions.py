@@ -89,6 +89,17 @@ def _ensure_row(conn: sqlite3.Connection, ticket_id: str) -> None:
     )
 
 
+def list_sessions(
+    db_path: Path = config.FEEDBACK_DB_PATH,
+) -> list[AgentSessionRecord]:
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM agent_sessions ORDER BY updated_at DESC"
+        ).fetchall()
+    return [_row_to_record(r) for r in rows]
+
+
 def get_session(
     ticket_id: str,
     db_path: Path = config.FEEDBACK_DB_PATH,
