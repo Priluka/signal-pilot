@@ -160,9 +160,10 @@ Austrian end-users registered in the Bmove Ticketless system are automatically c
 1. Customer is charged unexpectedly through Bmove Ticketless
 2. Customer contacts Bmove support via email or ticket, providing license plate, garage, and parking date/time
 3. Support agent requests additional information (paper ticket photo, license plate, session details) if not provided
-4. Agent investigates the session in internal systems to verify the charge
-5. Agent issues a refund for the incorrect amount
-6. Agent advises customer to exclude the relevant garage from Ticketless settings in the app to prevent recurrence
+4. porba
+5. Agent investigates the session in internal systems to verify the charge
+6. Agent issues a refund for the incorrect amount
+7. Agent advises customer to exclude the relevant garage from Ticketless settings in the app to prevent recurrence
 
 ## Typical actions
 
