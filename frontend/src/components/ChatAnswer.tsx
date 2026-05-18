@@ -1,33 +1,39 @@
-/** Renders a streaming Claude answer with inline [playbook-id] citations.
+/** Streaming Claude answer with footnote-style citation superscripts.
  *
- * Pre-processes the markdown to wrap every ``[playbook-id]`` match in backticks
- * so ReactMarkdown emits a ``<code>`` element. The ``code`` override below
- * inspects the text — if it matches a citation pattern it renders a small
- * pill, otherwise it falls back to a normal inline code element.
+ * Inline ``[playbook-id]`` matches in the model output are remapped to small
+ * blue superscript numbers (¹ ² ³ …) using the ``citations`` map built by
+ * the parent. Each number is a hash link to the matching source card at the
+ * bottom of the page and shows the source title in its native tooltip.
  *
- * Citations whose ids appear in the ``citedIds`` set are highlighted blue;
- * others (rare — the model invented an id) render in muted slate.
+ * The text is preprocessed so every ``[playbook-id]`` becomes ``cite:<id>``
+ * wrapped in inline-code; ReactMarkdown then routes it through the ``code``
+ * override below, which renders the <sup> link.
  */
 import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 
-const CITATION_TOKEN_RE = /^\[([a-z0-9][a-z0-9_-]+)\]$/;
+export interface CitationInfo {
+  number: number;
+  title: string;
+}
+
+
 const CITATION_GLOBAL_RE = /(\[[a-z0-9][a-z0-9_-]+\])/g;
 
 
 function preprocess(text: string): string {
-  return text.replace(CITATION_GLOBAL_RE, '`$1`');
+  return text.replace(CITATION_GLOBAL_RE, (full) => '`cite:' + full.slice(1, -1) + '`');
 }
 
 
 export function ChatAnswer({
   text,
-  citedIds,
+  citations,
 }: {
   text: string;
-  citedIds: Set<string>;
+  citations: Map<string, CitationInfo>;
 }) {
   const processed = useMemo(() => preprocess(text), [text]);
 
@@ -42,24 +48,29 @@ export function ChatAnswer({
               className?: string;
             };
             const raw = String(children ?? '');
-            const m = raw.match(CITATION_TOKEN_RE);
+            const m = raw.match(/^cite:(.+)$/);
             if (m) {
               const id = m[1];
-              const isCited = citedIds.has(id);
-              const tone = isCited
-                ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-                : 'bg-slate-50 text-slate-500 border-slate-200';
+              const info = citations.get(id);
+              if (info) {
+                return (
+                  <a
+                    href={`#source-${info.number}`}
+                    title={info.title}
+                    className="sp-citation"
+                  >
+                    {info.number}
+                  </a>
+                );
+              }
+              // Citation marker but the id wasn't in our source list — render
+              // it muted so the operator can still spot it.
               return (
-                <a
-                  href={`/knowledge/${id}`}
-                  className={`inline-flex items-center px-1 py-0 mx-0.5 rounded text-[10px] font-mono no-underline border ${tone}`}
-                  title={isCited ? 'Cited source' : 'Suggested source (not cited)'}
-                >
-                  [{id}]
-                </a>
+                <span className="sp-citation sp-citation-unknown" title="Source not in retrieved set">
+                  ?
+                </span>
               );
             }
-            // Default inline-code rendering.
             return (
               <code
                 className={className ?? 'px-1 py-0 bg-slate-100 text-slate-700 rounded text-[0.9em]'}
@@ -74,4 +85,33 @@ export function ChatAnswer({
       </ReactMarkdown>
     </div>
   );
+}
+
+
+/** Build the {playbook_id → {number, title}} map.
+ *
+ * Numbers are assigned by **first appearance** of the id in the answer
+ * text, then any retrieved-but-uncited source picks up the next number.
+ * Result: cited sources read 1, 2, 3… in narrative order.
+ */
+export function buildCitationMap(
+  answerText: string,
+  retrievedSources: { playbook_id: string; title: string }[],
+): Map<string, CitationInfo> {
+  const known = new Map(retrievedSources.map((s) => [s.playbook_id, s.title]));
+  const map = new Map<string, CitationInfo>();
+  let counter = 1;
+
+  for (const match of answerText.matchAll(CITATION_GLOBAL_RE)) {
+    const id = match[0].slice(1, -1);
+    if (known.has(id) && !map.has(id)) {
+      map.set(id, { number: counter++, title: known.get(id)! });
+    }
+  }
+  for (const s of retrievedSources) {
+    if (!map.has(s.playbook_id)) {
+      map.set(s.playbook_id, { number: counter++, title: s.title });
+    }
+  }
+  return map;
 }

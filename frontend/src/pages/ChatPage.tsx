@@ -1,7 +1,7 @@
 /** Chat tab — free-form question → streamed Claude answer over top-k playbooks. */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { ChatAnswer } from '../components/ChatAnswer';
+import { ChatAnswer, buildCitationMap } from '../components/ChatAnswer';
 import { SourceCard } from '../components/SourceCard';
 import { streamChatAnswer } from '../lib/api';
 import type { RetrievalHitOut } from '../lib/types';
@@ -18,7 +18,6 @@ export function ChatPage() {
   const [askedQuestion, setAskedQuestion] = useState('');
   const [sources, setSources] = useState<RetrievalHitOut[]>([]);
   const [answer, setAnswer] = useState('');
-  const [citedIds, setCitedIds] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -43,7 +42,6 @@ export function ChatPage() {
     setAskedQuestion(q);
     setSources([]);
     setAnswer('');
-    setCitedIds([]);
     setErrorMsg(null);
     setStatus('streaming');
 
@@ -52,7 +50,6 @@ export function ChatPage() {
       onDelta: (e) => setAnswer((prev) => prev + e.text),
       onDone: (e) => {
         setAnswer(e.answer);
-        setCitedIds(e.cited_ids);
         setStatus('done');
       },
       onError: (e) => {
@@ -68,12 +65,20 @@ export function ChatPage() {
     setAskedQuestion('');
     setSources([]);
     setAnswer('');
-    setCitedIds([]);
     setErrorMsg(null);
     setStatus('idle');
   }
 
-  const citedSet = new Set(citedIds);
+  // Citation map (id → {number, title}) rebuilt as the answer grows.
+  // Sources are rendered ordered by the assigned footnote number.
+  const citations = useMemo(() => buildCitationMap(answer, sources), [answer, sources]);
+  const orderedSources = useMemo(() => {
+    return [...sources].sort((a, b) => {
+      const na = citations.get(a.playbook_id)?.number ?? 999;
+      const nb = citations.get(b.playbook_id)?.number ?? 999;
+      return na - nb;
+    });
+  }, [sources, citations]);
 
   return (
     <div className="h-full overflow-y-auto scrollbar-thin">
@@ -155,7 +160,7 @@ export function ChatPage() {
             </header>
             <div className="bg-panel-surface border border-panel-border rounded-lg p-5">
               {answer ? (
-                <ChatAnswer text={answer} citedIds={citedSet} />
+                <ChatAnswer text={answer} citations={citations} />
               ) : status === 'streaming' ? (
                 <div className="text-sm text-slate-400 flex items-center gap-2">
                   <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
@@ -177,21 +182,19 @@ export function ChatPage() {
               <h2 className="text-[11px] font-semibold tracking-wider uppercase text-slate-500">
                 Sources
               </h2>
-              {status === 'done' && citedIds.length === 0 && (
-                <span className="text-[11px] text-amber-600">
-                  No inline citations detected — answer may be ungrounded.
-                </span>
-              )}
+              {status === 'done' &&
+                Array.from(citations.values()).every((c) => c.number > sources.length) && (
+                  <span className="text-[11px] text-amber-600">
+                    No inline citations detected — answer may be ungrounded.
+                  </span>
+                )}
             </header>
-            <div className="space-y-3">
-              {sources.map((hit) => (
-                <SourceCard
-                  key={hit.playbook_id}
-                  hit={hit}
-                  cited={citedSet.has(hit.playbook_id)}
-                />
-              ))}
-            </div>
+            <ol className="space-y-2 list-none pl-0">
+              {orderedSources.map((hit) => {
+                const number = citations.get(hit.playbook_id)?.number ?? 0;
+                return <SourceCard key={hit.playbook_id} hit={hit} number={number} />;
+              })}
+            </ol>
           </section>
         )}
 

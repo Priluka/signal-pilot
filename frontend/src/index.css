@@ -21,3 +21,32 @@ body {
 .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.35); border-radius: 8px; }
 .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.55); }
 .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+
+/* Inline footnote-style citation superscripts in chat answers. */
+.sp-citation {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.3rem;
+  margin: 0 0.15rem;
+  border-radius: 9999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-decoration: none;
+  vertical-align: super;
+  line-height: 1;
+  transition: background 120ms ease, color 120ms ease;
+}
+.sp-citation:hover {
+  background: #2563eb;
+  color: #ffffff;
+}
+.sp-citation-unknown {
+  background: #f1f5f9;
+  color: #64748b;
+}
