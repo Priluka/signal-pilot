@@ -73,7 +73,7 @@ export function AgentInbox({ rows, loading, error }: Props) {
             return (
               <li key={t.key}>
                 <Link
-                  to={`/agent/${t.key}`}
+                  to={`/inbox/${t.key}`}
                   className={`block px-4 py-3 border-b border-panel-divider transition-colors ${
                     isActive
                       ? 'bg-blue-50/60 border-l-2 border-l-blue-500'
