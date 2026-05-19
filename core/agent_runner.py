@@ -125,6 +125,13 @@ def process_ticket(
         return
 
     agent_sessions.mark_started(ticket_id)
+    # Stamp the global mode now so any early-return path (skipped /
+    # classifier failure / no retrieval hit) still shows what mode the
+    # ticket was processed under. If a draft is generated against a
+    # playbook with an override, we overwrite this with the playbook's
+    # effective mode further down.
+    from core import agent_config  # local import to keep module-load fast
+    agent_sessions.mark_processed_mode(ticket_id, agent_config.get_mode())
 
     summary = str(ticket.get("summary") or "")
     description = str(ticket.get("description") or "")
@@ -194,6 +201,12 @@ def process_ticket(
         "rationale": draft.rationale,
     }
     agent_sessions.upsert_draft(ticket_id, top_pb_id, draft_payload)
+    # Now that we know which playbook matched, refine the processed mode
+    # with any per-playbook override (effective_mode falls back to global
+    # if there's no override).
+    agent_sessions.mark_processed_mode(
+        ticket_id, agent_config.effective_mode(top_pb_id)
+    )
 
 
 def _record_error(ticket_id: str, step: str, exc: Exception) -> None:

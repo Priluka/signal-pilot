@@ -25,12 +25,17 @@ import type {
   FeedbackRecord,
   FeedbackRequest,
   FeedbackStats,
+  AgentConfig,
+  AgentConfigUpdate,
+  AgentOverview,
   GraphResponse,
   JiraCommentRequest,
   JiraCommentResponse,
+  JiraConnectionStatus,
   JiraTicketDetail,
   JiraTicketSummary,
   PlaybookDetail,
+  PlaybookModeRow,
   PlaybookSummary,
   RetrieveRequest,
   RetrieveResponse,
@@ -137,6 +142,40 @@ export function postJiraComment(req: JiraCommentRequest): Promise<JiraCommentRes
     method: 'POST',
     body: JSON.stringify(req),
   });
+}
+
+export function getJiraConnection(probe = false): Promise<JiraConnectionStatus> {
+  return json<JiraConnectionStatus>(`/jira/connection${probe ? '?probe=true' : ''}`);
+}
+
+// --- Agent config / overview / per-playbook modes -------------------------
+export function getAgentConfig(): Promise<AgentConfig> {
+  return json<AgentConfig>('/agent/config');
+}
+
+export function updateAgentConfig(req: AgentConfigUpdate): Promise<AgentConfig> {
+  return json<AgentConfig>('/agent/config', {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  });
+}
+
+export function getAgentOverview(): Promise<AgentOverview> {
+  return json<AgentOverview>('/agent/overview');
+}
+
+export function listPlaybookModes(): Promise<PlaybookModeRow[]> {
+  return json<PlaybookModeRow[]>('/agent/playbook-modes');
+}
+
+export function updatePlaybookMode(
+  playbookId: string,
+  mode: 'shadow' | 'assisted' | 'autonomous' | null,
+): Promise<PlaybookModeRow> {
+  return json<PlaybookModeRow>(
+    `/agent/playbook-modes/${encodeURIComponent(playbookId)}`,
+    { method: 'PUT', body: JSON.stringify({ mode }) },
+  );
 }
 
 // --- Agent -----------------------------------------------------------------

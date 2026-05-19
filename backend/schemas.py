@@ -225,6 +225,16 @@ class AgentSessionDetail(BaseModel):
     retrieved_at: str | None = None
     drafted_at: str | None = None
     feedback_at: str | None = None
+    # Set when autonomous mode posted the final reply directly to the
+    # source system (Jira). When non-null the operator UI hides the
+    # Approve/Edit/Reject row and shows an 'auto-resolved' banner instead.
+    auto_posted_at: str | None = None
+    # Effective mode at the time this ticket was processed — drives the
+    # per-ticket mode badge in the inbox list and the detail view.
+    processed_mode: str | None = None
+    # Convenience: lets the frontend render a 'Open in Jira' link without
+    # having to fetch the connection separately. Populated from JIRA_URL.
+    jira_browse_url: str | None = None
 
 
 class AgentSessionSummary(BaseModel):
@@ -241,6 +251,7 @@ class AgentSessionSummary(BaseModel):
     updated_at: str
     drafted_at: str | None = None
     feedback_at: str | None = None
+    processed_mode: str | None = None
 
 
 class BatchStatus(BaseModel):
@@ -384,3 +395,59 @@ class JiraCommentResponse(BaseModel):
     issue_key: str
     created: str | None = None
     author: str | None = None
+
+
+# --- Agent config / mode --------------------------------------------------
+class AgentConfig(BaseModel):
+    mode: str  # 'shadow' | 'assisted' | 'autonomous'
+    confidence_threshold: float
+
+
+class AgentConfigUpdate(BaseModel):
+    mode: str | None = None
+    confidence_threshold: float | None = None
+
+
+class PlaybookModeUpdate(BaseModel):
+    # ``mode = None`` clears the per-playbook override so it follows the
+    # global mode again.
+    mode: str | None = None
+
+
+class PlaybookModeRow(BaseModel):
+    playbook_id: str
+    title: str
+    ticket_class: str
+    mode: str  # effective mode (override or global)
+    is_override: bool
+    sample_count: int
+    approved_count: int
+    edited_count: int
+    rejected_count: int
+    approve_rate: float | None = None
+    avg_confidence: float | None = None
+
+
+class AgentOverview(BaseModel):
+    name: str = "bMove Support Agent"
+    status: str = "Active"
+    mode: str
+    confidence_threshold: float
+    source_label: str  # e.g. "Jira · KAN (teamoraapp.atlassian.net)"
+    playbooks_loaded: int
+    processed: int
+    approval_rate: float | None
+    approved_count: int
+    rejected_count: int
+    avg_confidence: float | None
+    uptime_since: str | None  # earliest agent_sessions timestamp
+
+
+class JiraConnectionStatus(BaseModel):
+    configured: bool
+    url: str | None = None
+    email: str | None = None
+    project: str | None = None
+    token_masked: str | None = None
+    reachable: bool | None = None
+    detail: str | None = None

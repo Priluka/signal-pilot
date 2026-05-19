@@ -192,6 +192,7 @@ export interface AgentSessionSummary {
   updated_at: string;
   drafted_at: string | null;
   feedback_at: string | null;
+  processed_mode?: AgentMode | null;
 }
 
 export interface AgentSessionDetail {
@@ -209,6 +210,9 @@ export interface AgentSessionDetail {
   retrieved_at: string | null;
   drafted_at: string | null;
   feedback_at: string | null;
+  auto_posted_at?: string | null;
+  processed_mode?: AgentMode | null;
+  jira_browse_url?: string | null;
 }
 
 export interface BatchStatus {
@@ -247,7 +251,8 @@ export type AgentEventType =
   | 'skipped'
   | 'suggestion_created'
   | 'suggestion_accepted'
-  | 'suggestion_rejected';
+  | 'suggestion_rejected'
+  | 'config_change';
 
 export interface AgentActivityEvent {
   timestamp: string;
@@ -377,6 +382,58 @@ export interface ChatSessionDetail extends ChatSessionSummary {
   hits: RetrievalHitOut[];
   cited_ids: string[];
   error_message: string | null;
+}
+
+// Agent runtime config + per-playbook overrides
+export type AgentMode = 'shadow' | 'assisted' | 'autonomous';
+
+export interface AgentConfig {
+  mode: AgentMode;
+  confidence_threshold: number;
+}
+
+export interface AgentConfigUpdate {
+  mode?: AgentMode;
+  confidence_threshold?: number;
+}
+
+export interface PlaybookModeRow {
+  playbook_id: string;
+  title: string;
+  ticket_class: string;
+  mode: AgentMode;
+  is_override: boolean;
+  sample_count: number;
+  approved_count: number;
+  edited_count: number;
+  rejected_count: number;
+  approve_rate: number | null;
+  avg_confidence: number | null;
+}
+
+export interface AgentOverview {
+  name: string;
+  status: string;
+  mode: AgentMode;
+  confidence_threshold: number;
+  source_label: string;
+  playbooks_loaded: number;
+  processed: number;
+  approval_rate: number | null;
+  approved_count: number;
+  rejected_count: number;
+  avg_confidence: number | null;
+  uptime_since: string | null;
+}
+
+export interface JiraConnectionStatus {
+  configured: boolean;
+  url: string | null;
+  email: string | null;
+  project: string | null;
+  token_masked: string | null;
+  reachable: boolean | null;
+  detail: string | null;
 }
 
 // Jira — same shape as TicketSummary / TicketDetail, just aliased for clarity.

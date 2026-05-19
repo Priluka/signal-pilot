@@ -34,6 +34,9 @@ import type {
   TicketDetail,
   TicketSummary,
 } from '../lib/types';
+import { useAgentMode } from '../lib/useAgentMode';
+
+import { AgentModeChip } from '../components/AgentModeChip';
 
 
 const NEEDS_ATTENTION = new Set<AgentStatus>(['needs_review', 'escalated']);
@@ -43,6 +46,7 @@ type Source = 'local' | 'jira';
 export function InboxPage() {
   const { ticketKey } = useParams();
   const navigate = useNavigate();
+  const agentMode = useAgentMode();
 
   // Hold the active source in localStorage so the tab choice survives
   // page reloads + cross-tab navigation.
@@ -160,7 +164,16 @@ export function InboxPage() {
     };
   }, [refresh, refreshJira, source]);
 
-  // Jira: fetch once on switch, refetch on agent-sessions-changed (handled above).
+  // Jira: fetch on mount regardless of active source so the 'Jira tickets (N)'
+  // tab badge shows the real count before the operator clicks. Otherwise
+  // the badge sits at (0) and the operator dismisses the tab thinking
+  // there's nothing there.
+  useEffect(() => {
+    refreshJira();
+  }, [refreshJira]);
+
+  // Refetch when the operator switches to the Jira tab so the list isn't
+  // a stale snapshot from page load.
   useEffect(() => {
     if (source === 'jira') refreshJira();
   }, [source, refreshJira]);
@@ -270,6 +283,9 @@ export function InboxPage() {
             <h1 className="text-lg font-semibold tracking-tight text-slate-900">
               Inbox
             </h1>
+            {agentMode && (
+              <AgentModeChip mode={agentMode} size="sm" prefix="Default:" />
+            )}
             <div className="flex items-center gap-1">
               <SourceTab
                 active={source === 'local'}

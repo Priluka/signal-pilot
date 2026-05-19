@@ -35,13 +35,29 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     classified_at       TEXT,
     retrieved_at        TEXT,
     drafted_at          TEXT,
-    feedback_at         TEXT
+    feedback_at         TEXT,
+    auto_posted_at      TEXT,
+    processed_mode      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_updated ON agent_sessions(updated_at);
 """
 
 
-_TIMESTAMP_COLUMNS = ("started_at", "classified_at", "retrieved_at", "drafted_at", "feedback_at")
+# Columns added after v0.1. The migration loop adds them as TEXT if missing.
+_LATER_COLUMNS: tuple[str, ...] = ("processed_mode",)
+
+
+_TIMESTAMP_COLUMNS = (
+    "started_at",
+    "classified_at",
+    "retrieved_at",
+    "drafted_at",
+    "feedback_at",
+    # Set when autonomous mode posts the final (non-draft) Jira comment.
+    # Different from ``feedback_at`` so we can tell 'agent decided' apart
+    # from 'human decided' for the same approved-status session.
+    "auto_posted_at",
+)
 
 
 @dataclass
@@ -59,6 +75,12 @@ class AgentSessionRecord:
     retrieved_at: str | None = None
     drafted_at: str | None = None
     feedback_at: str | None = None
+    auto_posted_at: str | None = None
+    # Effective agent mode (shadow / assisted / autonomous) at the time
+    # this ticket was processed. Stored so the inbox can show what each
+    # ticket was handled under — relevant when the operator switches modes
+    # frequently or sets per-playbook overrides.
+    processed_mode: str | None = None
 
 
 @contextmanager
@@ -77,7 +99,7 @@ def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
 def _migrate_if_needed(conn: sqlite3.Connection) -> None:
     rows = conn.execute("PRAGMA table_info(agent_sessions)").fetchall()
     cols = {row[1] for row in rows}
-    for col in _TIMESTAMP_COLUMNS:
+    for col in _TIMESTAMP_COLUMNS + _LATER_COLUMNS:
         if col not in cols:
             conn.execute(f"ALTER TABLE agent_sessions ADD COLUMN {col} TEXT")
 
@@ -111,6 +133,8 @@ def _row_to_record(row: sqlite3.Row) -> AgentSessionRecord:
         retrieved_at=_row_get(row, "retrieved_at"),
         drafted_at=_row_get(row, "drafted_at"),
         feedback_at=_row_get(row, "feedback_at"),
+        auto_posted_at=_row_get(row, "auto_posted_at"),
+        processed_mode=_row_get(row, "processed_mode"),
     )
 
 
@@ -311,3 +335,39 @@ def derive_status(record: AgentSessionRecord | None) -> str:
     if record.classification:
         return "in_progress"
     return "pending"
+
+
+def mark_processed_mode(
+    ticket_id: str,
+    mode: str,
+    db_path: Path = config.FEEDBACK_DB_PATH,
+) -> None:
+    """Record which mode the agent was in when this ticket got processed.
+    Called from ``agent_runner.process_ticket`` once per ticket — used by
+    the inbox UI to badge each ticket with its handling mode."""
+    init_db(db_path)
+    now = _now()
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE agent_sessions SET processed_mode = ?, updated_at = ? "
+            "WHERE ticket_id = ?",
+            (mode, now, ticket_id),
+        )
+
+
+def mark_auto_posted(
+    ticket_id: str,
+    db_path: Path = config.FEEDBACK_DB_PATH,
+) -> None:
+    """Stamp ``auto_posted_at`` so the UI can tell autonomous-mode posts
+    apart from human-approved ones (both look 'approved' otherwise)."""
+    init_db(db_path)
+    now = _now()
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE agent_sessions SET auto_posted_at = ?, updated_at = ? "
+            "WHERE ticket_id = ?",
+            (now, now, ticket_id),
+        )
+
+

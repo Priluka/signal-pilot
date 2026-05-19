@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from core import agent_runner, agent_sessions
+from core import agent_config, agent_runner, agent_sessions
 from core import suggestions as suggestions_store
 from core.classifier import classify_ticket
 from core.drafter import draft_reply
@@ -19,7 +19,10 @@ from core.retrieval import (
 from ..deps import get_playbook_index, get_playbooks, get_tickets
 from ..schemas import (
     AgentActivityEvent,
+    AgentConfig,
+    AgentConfigUpdate,
     AgentMetrics,
+    AgentOverview,
     AgentSessionDetail,
     AgentSessionSummary,
     BatchStatus,
@@ -27,6 +30,8 @@ from ..schemas import (
     ClassifyResponse,
     DraftRequest,
     DraftResponse,
+    PlaybookModeRow,
+    PlaybookModeUpdate,
     RetrievalHitOut,
     RetrieveRequest,
     RetrieveResponse,
@@ -35,6 +40,12 @@ from ..serializers import derive_project_keys
 
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+def _title(s: str | None) -> str:
+    """Render a mode name in title case for the activity feed — keep the
+    underscored persistence form intact, just adjust display."""
+    return (s or "").capitalize() if s else "—"
 
 
 def _hit_to_out(hit: RetrievalHit) -> RetrievalHitOut:
@@ -154,6 +165,10 @@ def agent_draft(
 # Per-ticket workflow session (GET + DELETE for rehydration / redo)
 # ---------------------------------------------------------------------------
 def _record_to_detail(r: agent_sessions.AgentSessionRecord) -> AgentSessionDetail:
+    import os
+
+    base = (os.environ.get("JIRA_URL") or "").rstrip("/") or None
+    jira_url = f"{base}/browse/{r.ticket_id}" if base and _looks_like_jira_key(r.ticket_id) else None
     return AgentSessionDetail(
         ticket_id=r.ticket_id,
         classification=ClassifyResponse(**r.classification) if r.classification else None,
@@ -169,7 +184,21 @@ def _record_to_detail(r: agent_sessions.AgentSessionRecord) -> AgentSessionDetai
         retrieved_at=r.retrieved_at,
         drafted_at=r.drafted_at,
         feedback_at=r.feedback_at,
+        auto_posted_at=r.auto_posted_at,
+        processed_mode=r.processed_mode,
+        jira_browse_url=jira_url,
     )
+
+
+def _looks_like_jira_key(ticket_id: str) -> bool:
+    """Heuristic: Jira keys are UPPER-{number}. Local sample keys (BS-30593,
+    etc) also match this shape but they're already in Jira semantically —
+    the browse URL points there too. We only filter out clearly-non-Jira
+    pseudo-ids like 'config' or anything without a dash."""
+    if "-" not in ticket_id:
+        return False
+    prefix, _, suffix = ticket_id.partition("-")
+    return prefix.isupper() and suffix.isdigit()
 
 
 def _record_to_summary(
@@ -194,6 +223,7 @@ def _record_to_summary(
         updated_at=r.updated_at,
         drafted_at=r.drafted_at,
         feedback_at=r.feedback_at,
+        processed_mode=r.processed_mode,
     )
 
 
@@ -314,6 +344,40 @@ def list_activity(limit: int = 500) -> list[AgentActivityEvent]:
                 )
             )
 
+    # Config change events — global mode + threshold land under
+    # ticket_id='config' so they cluster in one card; per-playbook mode
+    # changes use the playbook_id so they sit next to that playbook's
+    # other activity (suggestion lifecycle, future per-playbook events).
+    for ev in agent_config.list_config_events():
+        field = ev["field"]
+        old_v = ev.get("old_value")
+        new_v = ev.get("new_value")
+        author = ev.get("author") or "operator"
+        if field == "mode":
+            detail = f"{_title(old_v)} → {_title(new_v)} (global) · by {author}"
+            ticket_id = "config"
+        elif field == "threshold":
+            detail = f"{old_v} → {new_v} · by {author}"
+            ticket_id = "config"
+        elif field == "playbook_mode":
+            target = ev.get("target") or "?"
+            display_old = _title(old_v) if old_v else "follow global"
+            display_new = _title(new_v) if new_v else "follow global (cleared)"
+            suffix = "(override)" if new_v else "(cleared)"
+            detail = f"{target} · {display_old} → {display_new} {suffix} · by {author}"
+            ticket_id = target
+        else:
+            detail = f"{field}: {old_v} → {new_v} · by {author}"
+            ticket_id = "config"
+        events.append(
+            AgentActivityEvent(
+                timestamp=ev["timestamp"],
+                ticket_id=ticket_id,
+                event_type="config_change",
+                detail=detail,
+            )
+        )
+
     # Suggestion lifecycle events — grouped under the playbook id so all
     # activity for a given playbook shows up together in the log.
     for sug in suggestions_store.list_suggestions():
@@ -392,3 +456,141 @@ def get_agent_session(ticket_id: str) -> AgentSessionDetail | None:
 @router.delete("/sessions/{ticket_id}", status_code=204)
 def delete_agent_session(ticket_id: str) -> None:
     agent_sessions.delete_session(ticket_id)
+
+
+# ---------------------------------------------------------------------------
+# Agent runtime config (mode + threshold) and per-playbook mode overrides
+# ---------------------------------------------------------------------------
+
+_VALID_MODES = {"shadow", "assisted", "autonomous"}
+
+
+@router.get("/config", response_model=AgentConfig)
+def get_agent_config() -> AgentConfig:
+    return AgentConfig(
+        mode=agent_config.get_mode(),
+        confidence_threshold=agent_config.get_confidence_threshold(),
+    )
+
+
+@router.put("/config", response_model=AgentConfig)
+def update_agent_config(req: AgentConfigUpdate) -> AgentConfig:
+    if req.mode is not None:
+        if req.mode not in _VALID_MODES:
+            raise HTTPException(
+                status_code=422, detail=f"mode must be one of {sorted(_VALID_MODES)}"
+            )
+        agent_config.set_mode(req.mode)  # type: ignore[arg-type]
+    if req.confidence_threshold is not None:
+        try:
+            agent_config.set_confidence_threshold(req.confidence_threshold)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return AgentConfig(
+        mode=agent_config.get_mode(),
+        confidence_threshold=agent_config.get_confidence_threshold(),
+    )
+
+
+@router.put("/playbook-modes/{playbook_id}", response_model=PlaybookModeRow)
+def update_playbook_mode(
+    playbook_id: str,
+    req: PlaybookModeUpdate,
+    playbooks: list[Playbook] = Depends(get_playbooks),
+) -> PlaybookModeRow:
+    pb = next((p for p in playbooks if p.id == playbook_id), None)
+    if pb is None:
+        raise HTTPException(status_code=404, detail=f"Playbook {playbook_id!r} not found")
+    if req.mode is not None and req.mode not in _VALID_MODES:
+        raise HTTPException(
+            status_code=422, detail=f"mode must be one of {sorted(_VALID_MODES)} or null"
+        )
+    agent_config.set_playbook_mode(playbook_id, req.mode)  # type: ignore[arg-type]
+    return _playbook_mode_row(pb)
+
+
+def _playbook_mode_row(pb: Playbook) -> PlaybookModeRow:
+    """Aggregate per-playbook stats from agent_sessions for the mode table."""
+    override = agent_config.get_playbook_mode(pb.id)
+    effective = override or agent_config.get_mode()
+
+    sessions = [
+        s for s in agent_sessions.list_sessions()
+        if s.draft_playbook_id == pb.id
+    ]
+    sample_count = len(sessions)
+    approved = sum(1 for s in sessions if s.feedback_status == "approved")
+    edited = sum(1 for s in sessions if s.feedback_status == "edited")
+    rejected = sum(1 for s in sessions if s.feedback_status == "rejected")
+    decided = approved + edited + rejected
+    rate = (approved + edited) / decided if decided else None
+    confidences = [
+        float((s.classification or {}).get("confidence", 0.0))
+        for s in sessions
+        if s.classification and s.classification.get("confidence") is not None
+    ]
+    avg_conf = sum(confidences) / len(confidences) if confidences else None
+
+    return PlaybookModeRow(
+        playbook_id=pb.id,
+        title=pb.title,
+        ticket_class=pb.ticket_class,
+        mode=effective,
+        is_override=override is not None,
+        sample_count=sample_count,
+        approved_count=approved,
+        edited_count=edited,
+        rejected_count=rejected,
+        approve_rate=rate,
+        avg_confidence=avg_conf,
+    )
+
+
+@router.get("/playbook-modes", response_model=list[PlaybookModeRow])
+def list_playbook_mode_rows(
+    playbooks: list[Playbook] = Depends(get_playbooks),
+) -> list[PlaybookModeRow]:
+    return [_playbook_mode_row(pb) for pb in playbooks]
+
+
+@router.get("/overview", response_model=AgentOverview)
+def agent_overview(
+    playbooks: list[Playbook] = Depends(get_playbooks),
+) -> AgentOverview:
+    import os
+
+    sessions = agent_sessions.list_sessions()
+    decided = [s for s in sessions if s.feedback_status]
+    approved = sum(1 for s in decided if s.feedback_status in ("approved", "edited"))
+    rejected = sum(1 for s in decided if s.feedback_status == "rejected")
+    decided_total = approved + rejected
+    approval_rate = approved / decided_total if decided_total else None
+
+    confidences = [
+        float((s.classification or {}).get("confidence", 0.0))
+        for s in sessions
+        if s.classification and s.classification.get("confidence") is not None
+    ]
+    avg_conf = sum(confidences) / len(confidences) if confidences else None
+
+    earliest = min((s.started_at or s.updated_at for s in sessions if s), default=None) if sessions else None
+
+    jira_url = os.environ.get("JIRA_URL", "")
+    project = os.environ.get("JIRA_PROJECT", "")
+    host = jira_url.replace("https://", "").replace("http://", "").rstrip("/")
+    source_label = (
+        f"Jira · {project} ({host})" if project and host else "Local sample (no Jira configured)"
+    )
+
+    return AgentOverview(
+        mode=agent_config.get_mode(),
+        confidence_threshold=agent_config.get_confidence_threshold(),
+        source_label=source_label,
+        playbooks_loaded=len(playbooks),
+        processed=len(sessions),
+        approval_rate=approval_rate,
+        approved_count=approved,
+        rejected_count=rejected,
+        avg_confidence=avg_conf,
+        uptime_since=earliest,
+    )

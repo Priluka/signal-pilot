@@ -21,7 +21,9 @@ import type {
   AgentStatus,
   TicketDetail,
 } from '../lib/types';
+import { useAgentMode } from '../lib/useAgentMode';
 
+import { AgentModeChip } from './AgentModeChip';
 import { AgentStatusPill } from './AgentStatusPill';
 import { DiffView } from './DiffView';
 import { Chip, SectionHeading } from './ui';
@@ -38,6 +40,12 @@ export function AgentTicketDetail({
   ticket: TicketDetail;
   source?: TicketSource;
 }) {
+  const agentMode = useAgentMode();
+  // Approve posts to Jira only when the source IS Jira AND the operator
+  // has explicitly enabled outbound writes (assisted or autonomous). In
+  // shadow, the comment never leaves our DB. Null mode (still loading)
+  // defaults to safe behaviour — no outbound write.
+  const postsToJira = source === 'jira' && agentMode != null && agentMode !== 'shadow';
   const [session, setSession] = useState<AgentSessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -98,10 +106,13 @@ export function AgentTicketDetail({
         ? editedText
         : null;
     try {
-      // For Jira tickets, post the comment first — if Jira rejects it, we
-      // surface that error and DON'T log the local feedback, so the operator
-      // can retry. Local-only flows skip this step.
-      if (source === 'jira' && kind !== 'rejected') {
+      // Jira-side write happens ONLY when:
+      //   * the ticket is from Jira (not the local sample), AND
+      //   * the agent is NOT in shadow mode (shadow is feedback-only), AND
+      //   * the operator is approving / approving-with-edits (never on reject)
+      // If Jira rejects the comment we surface the error and skip the
+      // local feedback log so the operator can retry without double-counting.
+      if (postsToJira && kind !== 'rejected') {
         await postJiraComment({
           issue_key: ticket.key,
           body: finalText ?? session.draft.draft,
@@ -154,14 +165,23 @@ export function AgentTicketDetail({
   }
 
   const status: AgentStatus = session?.derived_status ?? 'pending';
-  const isActionable = status === 'needs_review' || status === 'escalated';
-  const isHistorical = status === 'approved' || status === 'rejected';
+  // Autonomous mode posts the comment without operator action — suppress
+  // the decision row and show an immutable green banner instead.
+  const isAutoPosted = Boolean(session?.auto_posted_at);
+  const isActionable =
+    !isAutoPosted && (status === 'needs_review' || status === 'escalated');
+  const isHistorical =
+    !isAutoPosted && (status === 'approved' || status === 'rejected');
   const hasEdits = session?.draft != null && editedText !== session.draft.draft;
 
   return (
     <div className="flex-1 overflow-y-auto scrollbar-thin">
       <div className="max-w-4xl mx-auto px-8 py-6 space-y-6">
-        <TicketHeader ticket={ticket} status={status} />
+        <TicketHeader
+          ticket={ticket}
+          status={status}
+          processedMode={session?.processed_mode ?? null}
+        />
 
         {loading && (
           <div className="text-sm text-slate-400">Loading session…</div>
@@ -209,12 +229,21 @@ export function AgentTicketDetail({
               />
             )}
 
+            {isAutoPosted && (
+              <AutoResolvedBanner
+                postedAt={session.auto_posted_at!}
+                jiraUrl={session.jira_browse_url ?? null}
+                ticketKey={ticket.key}
+              />
+            )}
+
             {isActionable && (
               <DecisionRow
                 hasEdits={hasEdits}
                 submitting={submitting}
                 submitError={submitError}
                 editing={editing}
+                postsToJira={postsToJira}
                 onApprove={() => decide(hasEdits ? 'edited' : 'approved')}
                 onEdit={() => setEditing(true)}
                 onReject={() => decide('rejected')}
@@ -308,9 +337,11 @@ export function AgentTicketDetail({
 function TicketHeader({
   ticket,
   status,
+  processedMode,
 }: {
   ticket: TicketDetail;
   status: AgentStatus;
+  processedMode: 'shadow' | 'assisted' | 'autonomous' | null;
 }) {
   return (
     <section className="bg-panel-surface border border-panel-border rounded-lg p-5">
@@ -321,7 +352,10 @@ function TicketHeader({
             {ticket.summary}
           </h2>
         </div>
-        <AgentStatusPill status={status} size="md" />
+        <div className="flex items-center gap-2 shrink-0">
+          {processedMode && <AgentModeChip mode={processedMode} size="sm" />}
+          <AgentStatusPill status={status} size="md" />
+        </div>
       </div>
       {ticket.labels.length > 0 && (
         <div className="mt-3 flex items-center gap-1.5 flex-wrap">
@@ -580,6 +614,7 @@ function DecisionRow({
   submitting,
   submitError,
   editing,
+  postsToJira,
   onApprove,
   onEdit,
   onReject,
@@ -588,10 +623,20 @@ function DecisionRow({
   submitting: boolean;
   submitError: string | null;
   editing: boolean;
+  postsToJira: boolean;
   onApprove: () => void;
   onEdit: () => void;
   onReject: () => void;
 }) {
+  // Approve button copy mirrors what it actually does. If no outbound
+  // write (shadow mode or local ticket), 'send' is misleading — drop it.
+  const approveLabel = postsToJira
+    ? hasEdits
+      ? 'Approve & send edited'
+      : 'Approve & send'
+    : hasEdits
+    ? 'Approve & save edit'
+    : 'Approve';
   return (
     <div className="pt-2">
       <div className="flex items-center justify-end gap-2">
@@ -619,7 +664,7 @@ function DecisionRow({
           disabled={submitting}
           className="px-4 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded hover:bg-emerald-700 disabled:opacity-60"
         >
-          {hasEdits ? 'Approve & save edit' : 'Approve & send'}
+          {approveLabel}
         </button>
       </div>
       {submitError && (
@@ -679,4 +724,72 @@ function formatTime(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+
+function formatTimestampFull(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
+
+function AutoResolvedBanner({
+  postedAt,
+  jiraUrl,
+  ticketKey,
+}: {
+  postedAt: string;
+  jiraUrl: string | null;
+  ticketKey: string;
+}) {
+  return (
+    <div className="border border-emerald-300 bg-emerald-50 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2 text-sm text-emerald-800">
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="text-emerald-600 shrink-0"
+        >
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+        <span>
+          <strong className="font-medium">Auto-resolved</strong> — comment posted to Jira at{' '}
+          <span className="font-mono text-[12px]">{formatTimestampFull(postedAt)}</span>
+        </span>
+      </div>
+      {jiraUrl ? (
+        <a
+          href={jiraUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs font-medium text-emerald-700 hover:text-emerald-900 inline-flex items-center gap-1"
+        >
+          Open {ticketKey}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+        </a>
+      ) : (
+        <span className="text-[11px] font-mono text-emerald-700">{ticketKey}</span>
+      )}
+    </div>
+  );
 }

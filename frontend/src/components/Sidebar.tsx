@@ -89,19 +89,6 @@ function ChatNavRow() {
 }
 
 
-function DisabledRow({ label, hint }: { label: string; hint: string }) {
-  return (
-    <div
-      title={hint}
-      className="flex items-center justify-between px-3 py-2 mx-2 rounded-md text-sm text-sidebar-heading cursor-not-allowed select-none"
-    >
-      <span>{label}</span>
-      <span className="text-[10px] italic">coming soon</span>
-    </div>
-  );
-}
-
-
 export function Sidebar() {
   const [playbooksCount, setPlaybooksCount] = useState<number | undefined>(undefined);
   const [suggestionsPending, setSuggestionsPending] = useState<number | undefined>(undefined);
@@ -156,11 +143,8 @@ export function Sidebar() {
         <NavRow to="/inbox" label="Inbox" count={inboxCount} badge />
         <NavRow to="/activity-log" label="Activity Log" />
         <NavRow to="/suggestions" label="Suggestions" count={suggestionsPending} badge />
+        <NavRow to="/agents" label="Agents" />
       </nav>
-
-      <div className="border-t border-sidebar-border py-2">
-        <DisabledRow label="Agents" hint="Coming soon — deployed agents, shadow mode, performance" />
-      </div>
     </aside>
   );
 }

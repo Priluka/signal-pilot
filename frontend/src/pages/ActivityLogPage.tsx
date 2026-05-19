@@ -14,6 +14,7 @@ import { AgentTicketDetail } from '../components/AgentTicketDetail';
 import {
   getAgentBatchStatus,
   getAgentMetrics,
+  getJiraTicket,
   getTicket,
   listAgentActivity,
   listAgentSessions,
@@ -44,6 +45,7 @@ const TYPE_FILTERS: Array<{ key: TypeFilter; label: string }> = [
   { key: 'rejected', label: 'Rejected' },
   { key: 'skipped', label: 'Skipped' },
   { key: 'suggestions', label: 'Suggestions' },
+  { key: 'config_change', label: 'Config' },
 ];
 
 
@@ -82,6 +84,7 @@ export function ActivityLogPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const [activeTicket, setActiveTicket] = useState<TicketDetail | null>(null);
+  const [activeSource, setActiveSource] = useState<'local' | 'jira'>('local');
   const [activeLoading, setActiveLoading] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -141,6 +144,11 @@ export function ActivityLogPage() {
     };
   }, [refresh]);
 
+  // Activity Log groups both local-sample tickets AND Jira tickets that
+  // came through /jira/process/{key}. Local /tickets/{key} returns 404 for
+  // Jira keys, so we try local first and fall back to /jira/tickets/{key}
+  // — that way the right pane works for both without the operator having
+  // to specify which source the row belongs to.
   useEffect(() => {
     if (!ticketKey) {
       setActiveTicket(null);
@@ -148,16 +156,28 @@ export function ActivityLogPage() {
     }
     let cancelled = false;
     setActiveLoading(true);
-    getTicket(ticketKey)
-      .then((d) => {
-        if (!cancelled) setActiveTicket(d);
-      })
-      .catch(() => {
-        if (!cancelled) setActiveTicket(null);
-      })
-      .finally(() => {
+    setActiveTicket(null);
+    (async () => {
+      try {
+        const local = await getTicket(ticketKey);
+        if (!cancelled) {
+          setActiveTicket(local);
+          setActiveSource('local');
+        }
+      } catch {
+        try {
+          const jira = await getJiraTicket(ticketKey);
+          if (!cancelled) {
+            setActiveTicket(jira);
+            setActiveSource('jira');
+          }
+        } catch {
+          if (!cancelled) setActiveTicket(null);
+        }
+      } finally {
         if (!cancelled) setActiveLoading(false);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -283,12 +303,17 @@ export function ActivityLogPage() {
         </div>
         {ticketKey && (
           <div className="w-[440px] shrink-0 border-l border-panel-border overflow-y-auto scrollbar-thin">
-            {activeLoading || !activeTicket ? (
+            {activeLoading ? (
               <div className="flex items-center justify-center h-full text-sm text-slate-400">
                 Loading ticket…
               </div>
+            ) : activeTicket ? (
+              <AgentTicketDetail ticket={activeTicket} source={activeSource} />
             ) : (
-              <AgentTicketDetail ticket={activeTicket} />
+              <div className="flex flex-col items-center justify-center h-full px-6 text-sm text-slate-500 text-center gap-2">
+                <span className="font-mono text-[12px] text-slate-400">{ticketKey}</span>
+                <p>Ticket not found in the local sample or your Jira project.</p>
+              </div>
             )}
           </div>
         )}
@@ -315,7 +340,30 @@ const EVENT_DOT: Record<AgentEventType, string> = {
   suggestion_created: 'bg-purple-500',
   suggestion_accepted: 'bg-purple-600',
   suggestion_rejected: 'bg-purple-400',
+  // Config changes wear a gear icon, not a dot — value here just for
+  // typing completeness.
+  config_change: 'bg-slate-500',
 };
+
+
+function GearIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
 
 
 function labelForEvent(eventType: AgentEventType): string {
@@ -328,6 +376,8 @@ function labelForEvent(eventType: AgentEventType): string {
       return 'suggestion · accepted';
     case 'suggestion_rejected':
       return 'suggestion · rejected';
+    case 'config_change':
+      return 'config · changed';
     default:
       return eventType;
   }
@@ -378,10 +428,15 @@ function TicketActivityCard({
     group.session.derived_status !== 'auto_resolved' &&
     group.session.derived_status !== 'skipped';
 
-  // A group whose events are all suggestion lifecycle events belongs to a
-  // playbook, not a ticket — the right-hand detail panel can't render it.
+  // A group whose events are all suggestion or config events belongs to
+  // a playbook (or to the global config pseudo-ticket), not to a real
+  // ticket — the right-hand detail panel can't render it.
   const isPlaybookOnly =
-    group.events.length > 0 && group.events.every((e) => isSuggestionEvent(e.event_type));
+    group.events.length > 0 &&
+    group.events.every(
+      (e) => isSuggestionEvent(e.event_type) || e.event_type === 'config_change',
+    );
+  const isGlobalConfig = group.ticket_id === 'config';
 
   return (
     <div
@@ -410,7 +465,12 @@ function TicketActivityCard({
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
-        {isPlaybookOnly ? (
+        {isGlobalConfig ? (
+          <span className="text-[12px] font-mono text-slate-600 flex items-center gap-1.5">
+            <GearIcon className="text-slate-400" />
+            {group.ticket_id}
+          </span>
+        ) : isPlaybookOnly ? (
           <Link
             to={`/knowledge/${group.ticket_id}`}
             className="text-[12px] font-mono text-purple-700 hover:text-purple-900 hover:underline flex items-center gap-1.5"
@@ -428,7 +488,11 @@ function TicketActivityCard({
             {group.ticket_id}
           </button>
         )}
-        {isPlaybookOnly ? (
+        {isGlobalConfig ? (
+          <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium border rounded bg-slate-100 text-slate-700 border-slate-200">
+            config
+          </span>
+        ) : isPlaybookOnly ? (
           <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium border rounded bg-purple-50 text-purple-700 border-purple-200">
             playbook
           </span>
@@ -458,7 +522,9 @@ function TicketActivityCard({
                 {formatTime(e.timestamp)}
               </span>
               <span className="flex items-center justify-center">
-                {isSuggestionEvent(e.event_type) ? (
+                {e.event_type === 'config_change' ? (
+                  <GearIcon className="text-slate-500" />
+                ) : isSuggestionEvent(e.event_type) ? (
                   <PencilIcon
                     className={
                       e.event_type === 'suggestion_accepted'
@@ -476,7 +542,9 @@ function TicketActivityCard({
               </span>
               <span
                 className={`text-[12px] ${
-                  isSuggestionEvent(e.event_type)
+                  e.event_type === 'config_change'
+                    ? 'text-slate-600'
+                    : isSuggestionEvent(e.event_type)
                     ? 'text-purple-700'
                     : 'text-slate-700'
                 }`}

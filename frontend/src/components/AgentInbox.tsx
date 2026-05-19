@@ -8,6 +8,7 @@ import type {
   TicketSummary,
 } from '../lib/types';
 
+import { AgentModeChip } from './AgentModeChip';
 import { AgentStatusPill, statusPriority } from './AgentStatusPill';
 
 
@@ -88,6 +89,9 @@ export function AgentInbox({ rows, loading, error }: Props) {
                     {t.summary}
                   </div>
                   <div className="mt-1.5 flex items-center gap-2 text-[10px] text-slate-500 font-mono">
+                    {s?.processed_mode && (
+                      <AgentModeChip mode={s.processed_mode} size="sm" />
+                    )}
                     {confidence != null && (
                       <span>conf {confidence.toFixed(2)}</span>
                     )}

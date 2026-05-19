@@ -2,8 +2,8 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 
 import { Layout } from './components/Layout';
 import { ActivityLogPage } from './pages/ActivityLogPage';
+import { AgentsPage } from './pages/AgentsPage';
 import { ChatPage } from './pages/ChatPage';
-import { ComingSoonPage } from './pages/ComingSoonPage';
 import { GraphPage } from './pages/GraphPage';
 import { InboxPage } from './pages/InboxPage';
 import { KnowledgePage } from './pages/KnowledgePage';
@@ -28,33 +28,11 @@ function App() {
           <Route path="/agent" element={<Navigate to="/inbox" replace />} />
           <Route path="/agent/:ticketKey" element={<Navigate to="/inbox" replace />} />
           <Route path="/suggestions" element={<SuggestionsPage />} />
-          <Route
-            path="/agents/deployed"
-            element={
-              <ComingSoonPage
-                title="Deployed agents"
-                description="Inventory of agents running in production with their assigned playbook scopes."
-              />
-            }
-          />
-          <Route
-            path="/agents/shadow"
-            element={
-              <ComingSoonPage
-                title="Shadow mode"
-                description="Tickets where the agent generated a draft but a human reviewed before sending — for pilot tracking."
-              />
-            }
-          />
-          <Route
-            path="/agents/performance"
-            element={
-              <ComingSoonPage
-                title="Performance"
-                description="Approve / edit / reject rates over time, by playbook and by classifier confidence band."
-              />
-            }
-          />
+          <Route path="/agents" element={<AgentsPage />} />
+          {/* Old 'Coming soon' sub-routes now land on the Agents page. */}
+          <Route path="/agents/deployed" element={<Navigate to="/agents" replace />} />
+          <Route path="/agents/shadow" element={<Navigate to="/agents" replace />} />
+          <Route path="/agents/performance" element={<Navigate to="/agents" replace />} />
           <Route path="*" element={<Navigate to="/knowledge" replace />} />
         </Route>
       </Routes>
