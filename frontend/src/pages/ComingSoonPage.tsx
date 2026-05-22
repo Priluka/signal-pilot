@@ -12,11 +12,11 @@ export function ComingSoonPage({
         <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded">
           Coming soon
         </span>
-        <h1 className="mt-4 text-2xl font-semibold tracking-tight text-slate-900">
+        <h1 className="mt-4 text-2xl font-semibold tracking-tight text-ink">
           {title}
         </h1>
         {description && (
-          <p className="mt-2 text-sm text-slate-500 max-w-lg mx-auto">{description}</p>
+          <p className="mt-2 text-sm text-ink-muted max-w-lg mx-auto">{description}</p>
         )}
       </div>
     </div>

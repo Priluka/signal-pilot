@@ -27,12 +27,12 @@ export class ErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     if (this.state.error) {
       return (
-        <div className="h-full flex items-center justify-center bg-slate-50 p-8">
-          <div className="max-w-xl bg-white border border-red-200 rounded-lg p-6 shadow-sm">
+        <div className="h-full flex items-center justify-center bg-hover p-8">
+          <div className="max-w-xl bg-card border border-red-200 rounded-md p-6 shadow-sm">
             <h1 className="text-base font-semibold text-red-700">
               Something went wrong rendering the UI
             </h1>
-            <pre className="mt-3 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded p-3 overflow-auto max-h-64">
+            <pre className="mt-3 text-xs text-ink-body bg-hover border border-line rounded p-3 overflow-auto max-h-64">
               {this.state.error.message}
               {this.state.error.stack && '\n\n' + this.state.error.stack}
             </pre>
@@ -42,14 +42,14 @@ export class ErrorBoundary extends Component<Props, State> {
                 onClick={() => {
                   this.setState({ error: null });
                 }}
-                className="px-3 py-1.5 text-sm border border-slate-200 rounded hover:bg-slate-50"
+                className="px-3 py-1.5 text-sm border border-line rounded hover:bg-hover"
               >
                 Retry
               </button>
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
+                className="px-3 py-1.5 text-sm font-medium text-white bg-accent rounded hover:bg-accent-hover"
               >
                 Reload page
               </button>

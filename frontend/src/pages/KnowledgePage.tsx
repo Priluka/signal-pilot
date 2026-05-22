@@ -8,12 +8,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 
-import {
-  applyFilters,
-  deriveFilterOptions,
-  FilterBar,
-  type PlaybookFilterState,
-} from '../components/FilterBar';
+import { type PlaybookFilterState } from '../components/FilterBar';
 import { PlaybookList } from '../components/PlaybookList';
 import { PlaybookSidebar } from '../components/PlaybookSidebar';
 import { PlaybookViewer } from '../components/PlaybookViewer';
@@ -67,13 +62,6 @@ export function KnowledgePage() {
     }
     return out;
   }, [searchParams]);
-
-  const options = useMemo(() => deriveFilterOptions(allPlaybooks), [allPlaybooks]);
-
-  const filtered = useMemo(
-    () => applyFilters(allPlaybooks, filters),
-    [allPlaybooks, filters],
-  );
 
   function updateFilters(next: PlaybookFilterState) {
     const params = new URLSearchParams(searchParams);
@@ -136,37 +124,27 @@ export function KnowledgePage() {
   }, [slug]);
 
   return (
-    <div className="h-full flex flex-col">
-      <header className="px-6 py-4 border-b border-panel-border bg-panel-surface">
-        <h1 className="text-lg font-semibold tracking-tight text-slate-900">
-          Knowledge Library
-        </h1>
-      </header>
-      <div className="flex-1 flex overflow-hidden">
-        <div className="flex flex-col w-[340px] shrink-0 border-r border-panel-border bg-panel-surface">
-          <FilterBar
-            filters={filters}
-            onChange={updateFilters}
-            options={options}
-          />
-          <PlaybookList
-            playbooks={filtered}
-            loading={listLoading}
-            error={listError}
-            search={search}
-            onSearchChange={setSearch}
-            totalCount={allPlaybooks.length}
-            searchString={searchParams.toString() ? `?${searchParams.toString()}` : ''}
-          />
-        </div>
-        <PlaybookViewer
-          playbook={detail}
-          loading={detailLoading}
-          error={detailError}
-          hasSelection={Boolean(slug)}
+    <div className="h-full flex overflow-hidden">
+      <div className="flex flex-col w-[360px] shrink-0 border-r border-line-subtle">
+        <PlaybookList
+          playbooks={allPlaybooks}
+          loading={listLoading}
+          error={listError}
+          search={search}
+          onSearchChange={setSearch}
+          filters={filters}
+          onFiltersChange={updateFilters}
+          totalCount={allPlaybooks.length}
+          searchString={searchParams.toString() ? `?${searchParams.toString()}` : ''}
         />
-        {detail && <PlaybookSidebar playbook={detail} />}
       </div>
+      <PlaybookViewer
+        playbook={detail}
+        loading={detailLoading}
+        error={detailError}
+        hasSelection={Boolean(slug)}
+      />
+      {detail && <PlaybookSidebar playbook={detail} />}
     </div>
   );
 }

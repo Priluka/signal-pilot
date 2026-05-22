@@ -11,7 +11,7 @@ export function DiffView({
 }) {
   const parts = diffWords(original, edited);
   return (
-    <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap font-sans">
+    <div className="text-sm text-ink-body leading-relaxed whitespace-pre-wrap font-sans">
       {parts.map((part, i) => {
         if (part.added) {
           return (

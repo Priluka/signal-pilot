@@ -4,12 +4,26 @@
  * app root, so navigating away does NOT abort the in-flight stream. The
  * answer keeps growing on the server, persists on done, and is here when
  * the operator comes back.
+ *
+ * The main area is split into a sticky input zone on top (textarea inside
+ * a focus-ring container with top-k + actions baked into its bottom bar)
+ * and a scrollable answer area below. The answer uses a left accent
+ * border instead of a full card so the prose reads like a document, not
+ * a form field.
  */
 import { useEffect, useMemo, useRef } from 'react';
+import { ArrowUp, Sparkles } from 'lucide-react';
 
 import { ChatAnswer, buildCitationMap } from '../components/ChatAnswer';
 import { ChatHistorySidebar } from '../components/ChatHistorySidebar';
 import { useChatStore } from '../lib/chatStore';
+
+
+const EXAMPLE_QUESTIONS = [
+  'What do I tell a customer who got a parking fine despite paying via the app?',
+  'How do I handle a duplicate-charge refund request?',
+  'Što napraviti kad korisnik ne može aktivirati parkiranje?',
+];
 
 
 export function ChatPage() {
@@ -24,7 +38,9 @@ export function ChatPage() {
   }, [chat.answer, chat.status]);
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    // Enter submits; Shift+Enter inserts a newline (standard chat UX).
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
       chat.ask();
     }
   }
@@ -35,16 +51,18 @@ export function ChatPage() {
   }
 
   const citations = useMemo(
-    () => buildCitationMap(chat.answer, chat.sources),
-    [chat.answer, chat.sources],
+    () => buildCitationMap(chat.answer, chat.sources, chat.citationIndex),
+    [chat.answer, chat.sources, chat.citationIndex],
   );
 
   const isStreaming = chat.status === 'streaming';
+  // True when the model produced an answer but emitted zero inline
+  // citations — operator should treat the claims as ungrounded.
   const noCitationsDetected =
     chat.status === 'done' &&
     chat.answer.length > 0 &&
     chat.sources.length > 0 &&
-    Array.from(citations.values()).every((c) => c.number > chat.sources.length);
+    !/\[[a-z0-9][a-z0-9_-]+\]/.test(chat.answer);
 
   return (
     <div className="h-full flex">
@@ -53,50 +71,80 @@ export function ChatPage() {
         onSelect={chat.loadSession}
         onNewChat={chat.clear}
       />
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
-        <div className="max-w-4xl mx-auto px-8 py-8 space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Chat</h1>
-              <p className="text-sm text-slate-500 mt-0.5">
-                Ask a free-form question — the answer is grounded in the top-k retrieved playbooks and cites them inline.
-              </p>
-            </div>
-            <span className="text-[11px] font-mono text-slate-400">Sonnet 4.6</span>
-          </div>
+      <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
+        {/* Answer — takes all space, scrolls; scrollbar flush with panel edge */}
+        <div className="flex-1 overflow-y-auto scrollbar-thin min-w-0">
+          <div className="max-w-3xl mx-auto w-full px-6 pt-12 pb-6 min-w-0">
+            {chat.askedQuestion ? (
+              <section className="min-w-0">
+                <div className="min-w-0 break-words">
+                  {chat.answer ? (
+                    <ChatAnswer text={chat.answer} citations={citations} />
+                  ) : isStreaming ? (
+                    <div className="text-[13px] text-ink-muted flex items-center gap-2">
+                      <span className="inline-block w-2 h-2 rounded-full bg-accent animate-pulse" />
+                      Retrieving and drafting…
+                    </div>
+                  ) : null}
+                  {chat.status === 'error' && (
+                    <div className="mt-3 text-[13px] text-red-600">
+                      {chat.errorMsg}
+                    </div>
+                  )}
+                  <div ref={answerScrollRef} />
+                </div>
 
-          <form
-            onSubmit={onSubmit}
-            className="bg-panel-surface border border-panel-border rounded-lg p-4"
-          >
-            <textarea
-              value={chat.question}
-              onChange={(e) => chat.setQuestion(e.target.value)}
-              onKeyDown={onKeyDown}
-              rows={3}
-              placeholder="e.g. What do I tell a Croatian customer who got a parking fine despite paying via the app?"
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 resize-y"
-              disabled={isStreaming}
-            />
-            <div className="mt-3 flex items-center justify-between">
-              <label className="text-xs text-slate-500 flex items-center gap-2">
-                Top-k:
-                <input
-                  type="number"
-                  min={1}
-                  max={5}
-                  value={chat.topK}
-                  onChange={(e) => chat.setTopK(Math.max(1, Math.min(5, Number(e.target.value))))}
-                  className="w-12 px-1.5 py-0.5 text-xs border border-slate-200 rounded font-mono tabular-nums"
-                />
-                <span className="text-[11px] text-slate-400">playbooks consulted</span>
-              </label>
-              <div className="flex items-center gap-2">
-                {(chat.status === 'done' || chat.status === 'error' || chat.askedQuestion) && (
+                {noCitationsDetected && (
+                  <p className="mt-3 text-[11px] text-amber-600">
+                    No inline citations detected — answer may be ungrounded.
+                  </p>
+                )}
+              </section>
+            ) : (
+              <EmptyState
+                onPick={(q) => chat.setQuestion(q)}
+                disabled={isStreaming}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Input — bottom, pinned */}
+        <div className="shrink-0 px-6 py-4">
+          <form onSubmit={onSubmit} className="max-w-3xl mx-auto w-full">
+            <div className="relative bg-app border border-line-strong rounded-xl overflow-hidden shadow-sm focus-within:border-[#c8c8c8] focus-within:shadow-md transition-[box-shadow,border-color] duration-150">
+              <textarea
+                value={chat.question}
+                onChange={(e) => chat.setQuestion(e.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder="e.g. What do I tell a Croatian customer who got a parking fine despite paying via the app?"
+                disabled={isStreaming}
+                className="w-full bg-transparent px-4 pt-4 pb-12 text-[13px] text-ink placeholder:text-ink-muted resize-none focus:outline-none min-h-[100px] max-h-[200px]"
+              />
+              <div className="absolute bottom-0 left-0 right-0 px-4 py-2.5 flex items-center gap-3 border-t border-line-subtle bg-app">
+                <label className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-ink-muted">Top-k</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={chat.topK}
+                    onChange={(e) =>
+                      chat.setTopK(Math.max(1, Math.min(5, Number(e.target.value))))
+                    }
+                    className="w-8 h-6 text-center text-[11px] font-mono bg-card border border-line rounded text-ink focus:outline-none focus:border-accent"
+                  />
+                  <span className="text-[11px] text-ink-muted">playbooks</span>
+                </label>
+                <div className="ml-auto" />
+                {(chat.askedQuestion ||
+                  chat.status === 'done' ||
+                  chat.status === 'error' ||
+                  isStreaming) && (
                   <button
                     type="button"
                     onClick={chat.clear}
-                    className="px-3 py-1.5 text-sm border border-slate-200 text-slate-700 rounded hover:bg-slate-50"
+                    className="text-[12px] text-ink-muted hover:text-ink-body px-2 h-7 transition-colors"
                   >
                     {isStreaming ? 'Cancel' : 'Clear'}
                   </button>
@@ -104,58 +152,64 @@ export function ChatPage() {
                 <button
                   type="submit"
                   disabled={!chat.question.trim() || isStreaming}
-                  className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
+                  className="inline-flex items-center gap-1.5 bg-accent text-white hover:bg-accent-hover rounded-lg px-4 h-8 text-[12px] font-medium transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  {isStreaming ? 'Thinking…' : 'Ask'}
+                  {isStreaming ? (
+                    <>
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-white/80 animate-pulse" />
+                      Thinking…
+                    </>
+                  ) : (
+                    <>
+                      Ask
+                      <ArrowUp width={13} height={13} strokeWidth={2.25} />
+                    </>
+                  )}
                 </button>
               </div>
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">
-              Cmd/Ctrl + Enter to submit. Stream keeps running even if you navigate away.
-            </p>
           </form>
-
-          {chat.askedQuestion && (
-            <section>
-              <header className="mb-2 flex items-center justify-between">
-                <h2 className="text-[11px] font-semibold tracking-wider uppercase text-slate-500">
-                  Answer
-                </h2>
-                <div className="text-[11px] text-slate-400">
-                  grounded in {chat.sources.length || chat.topK} playbook{chat.sources.length === 1 ? '' : 's'}
-                  {' · asked: '}
-                  <em className="text-slate-500">{chat.askedQuestion}</em>
-                </div>
-              </header>
-              <div className="bg-panel-surface border border-panel-border rounded-lg p-5">
-                {chat.answer ? (
-                  <ChatAnswer text={chat.answer} citations={citations} />
-                ) : isStreaming ? (
-                  <div className="text-sm text-slate-400 flex items-center gap-2">
-                    <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                    Retrieving and drafting…
-                  </div>
-                ) : null}
-                {chat.status === 'error' && (
-                  <div className="mt-3 text-sm text-red-600">{chat.errorMsg}</div>
-                )}
-                <div ref={answerScrollRef} />
-              </div>
-              {noCitationsDetected && (
-                <p className="mt-2 text-[11px] text-amber-600">
-                  No inline citations detected — answer may be ungrounded.
-                </p>
-              )}
-            </section>
-          )}
-
-          {!chat.askedQuestion && (
-            <div className="text-center text-sm text-slate-400 py-8">
-              Try asking about a parking-fine dispute, a payment failure, a missing invoice, …
-              Past chats appear on the left.
-            </div>
-          )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Empty state — icon + prompt + clickable example chips
+// ---------------------------------------------------------------------------
+
+function EmptyState({
+  onPick,
+  disabled,
+}: {
+  onPick: (q: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 text-center">
+      <Sparkles
+        width={40}
+        height={40}
+        strokeWidth={1.5}
+        className="text-ink-muted opacity-40 mb-4"
+      />
+      <div className="text-[13px] text-ink-muted mb-6">
+        Ask a question about your playbooks
+      </div>
+      <div className="flex flex-col gap-2 w-full max-w-md">
+        {EXAMPLE_QUESTIONS.map((q) => (
+          <button
+            key={q}
+            type="button"
+            disabled={disabled}
+            onClick={() => onPick(q)}
+            className="text-left text-[12px] text-ink-body bg-app border border-line rounded-lg px-3 py-2 hover:bg-hover hover:border-line-strong transition-colors duration-150 disabled:opacity-40"
+          >
+            {q}
+          </button>
+        ))}
       </div>
     </div>
   );

@@ -357,9 +357,24 @@ export interface ChatSourcesEvent {
 export interface ChatDeltaEvent {
   text: string;
 }
+export interface CitationIndexEntry {
+  playbook_id: string;
+  title: string;
+  description?: string;
+  /** True when the playbook was in the top-K we showed the model. False
+   * when the model cited a playbook from outside the retrieved set
+   * (still resolvable to a real playbook via the full corpus lookup). */
+  in_topk: boolean;
+  /** False when the model hallucinated an id that doesn't exist anywhere
+   * in the corpus. The UI suppresses these so the operator never sees a
+   * broken citation marker. */
+  exists: boolean;
+}
+
 export interface ChatDoneEvent {
   answer: string;
   cited_ids: string[];
+  citation_index?: CitationIndexEntry[];
   session_id: number | null;
 }
 export interface ChatErrorEvent {
@@ -381,6 +396,7 @@ export interface ChatSessionDetail extends ChatSessionSummary {
   answer: string;
   hits: RetrievalHitOut[];
   cited_ids: string[];
+  citation_index: CitationIndexEntry[];
   error_message: string | null;
 }
 

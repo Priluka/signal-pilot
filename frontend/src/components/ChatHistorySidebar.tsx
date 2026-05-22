@@ -1,11 +1,12 @@
 /** Left rail in the Chat tab — list of past Q&A sessions.
  *
- * Each row is one question (truncated) plus a relative timestamp.
- * Clicking loads that session into the main panel.
- * "New chat" clears the panel back to the empty state.
- * Hovering exposes a small × that deletes the row.
+ * Each row is one question (truncated) plus a relative timestamp and
+ * source/citation counts. Clicking loads that session into the main
+ * panel. "New chat" clears the panel back to the empty state. Hovering
+ * exposes a small × that deletes the row.
  */
 import { useEffect, useState } from 'react';
+import { Plus, X } from 'lucide-react';
 
 import { deleteChatSession, listChatSessions } from '../lib/api';
 import type { ChatSessionSummary } from '../lib/types';
@@ -59,29 +60,32 @@ export function ChatHistorySidebar({ activeId, onSelect, onNewChat }: Props) {
   }
 
   return (
-    <aside className="flex flex-col w-[280px] shrink-0 border-r border-panel-border bg-panel-surface">
-      <div className="px-4 py-3 border-b border-panel-border">
+    <aside className="flex flex-col w-[280px] shrink-0 border-r border-line-subtle bg-card">
+      <div className="px-3 pt-3">
         <button
           type="button"
           onClick={onNewChat}
-          className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium border border-slate-200 bg-white text-slate-700 rounded hover:border-blue-400 hover:text-blue-600 transition-colors"
+          className="w-full h-9 inline-flex items-center justify-center gap-2 border border-line rounded-lg text-[13px] text-ink-body hover:bg-hover transition-colors duration-150"
         >
-          <span className="text-base leading-none">+</span> New chat
+          <Plus width={14} height={14} strokeWidth={2} />
+          New chat
         </button>
-        <div className="mt-2 text-[11px] font-semibold tracking-wider uppercase text-slate-500">
-          History · {sessions.length}
-        </div>
       </div>
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
+
+      <div className="text-[11px] uppercase tracking-wider font-semibold text-ink-muted px-3 pt-4 pb-2">
+        History <span className="text-ink-muted">· {sessions.length}</span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto scrollbar-thin pb-2">
         {loading && (
-          <div className="px-4 py-6 text-sm text-slate-400">Loading…</div>
+          <div className="px-4 py-6 text-sm text-ink-muted">Loading…</div>
         )}
         {error && (
           <div className="px-4 py-6 text-sm text-red-600">{error}</div>
         )}
         {!loading && !error && sessions.length === 0 && (
-          <div className="px-4 py-6 text-sm text-slate-400">
-            No history yet. Ask a question on the right.
+          <div className="px-4 py-6 text-[12px] text-ink-muted">
+            No history yet.
           </div>
         )}
         <ul>
@@ -89,30 +93,20 @@ export function ChatHistorySidebar({ activeId, onSelect, onNewChat }: Props) {
             const isActive = activeId === s.id;
             return (
               <li key={s.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelect(s.id)}
-                  className={`group/row w-full text-left px-4 py-3 border-b border-panel-divider transition-colors ${
-                    isActive
-                      ? 'bg-blue-50/60 border-l-2 border-l-blue-500'
-                      : 'hover:bg-slate-50 border-l-2 border-l-transparent'
+                <div
+                  className={`group/row mx-2 rounded-lg px-3 py-2.5 cursor-pointer transition-colors duration-150 ${
+                    isActive ? 'bg-hover' : 'hover:bg-hover'
                   }`}
+                  onClick={() => onSelect(s.id)}
                 >
                   <div className="flex items-start gap-2">
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm text-slate-900 leading-snug line-clamp-2">
+                      <div className="text-[12px] font-medium text-ink line-clamp-2 leading-snug">
                         {s.question}
                       </div>
-                      <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500 font-mono">
-                        <span>{formatTimestamp(s.timestamp)}</span>
-                        <span className="text-slate-300">·</span>
-                        <span>{s.source_count} src</span>
-                        {s.citation_count > 0 && (
-                          <>
-                            <span className="text-slate-300">·</span>
-                            <span>{s.citation_count} cited</span>
-                          </>
-                        )}
+                      <div className="mt-1 text-[10px] text-ink-muted">
+                        {formatTimestamp(s.timestamp)} · {s.source_count} src
+                        {s.citation_count > 0 && ` · ${s.citation_count} cited`}
                       </div>
                     </div>
                     <button
@@ -120,12 +114,12 @@ export function ChatHistorySidebar({ activeId, onSelect, onNewChat }: Props) {
                       onClick={(e) => handleDelete(e, s)}
                       disabled={deletingId === s.id}
                       title="Delete"
-                      className="opacity-0 group-hover/row:opacity-100 transition-opacity text-slate-400 hover:text-red-600 text-xs px-1 shrink-0"
+                      className="opacity-0 group-hover/row:opacity-100 transition-opacity text-ink-muted hover:text-red-600 shrink-0 w-5 h-5 inline-flex items-center justify-center rounded"
                     >
-                      ×
+                      <X width={12} height={12} strokeWidth={2} />
                     </button>
                   </div>
-                </button>
+                </div>
               </li>
             );
           })}

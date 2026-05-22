@@ -57,13 +57,13 @@ function FilterSelect({
 }) {
   return (
     <label className="flex flex-col gap-1 min-w-0">
-      <span className="text-[10px] font-semibold tracking-wider uppercase text-slate-500">
+      <span className="text-[10px] font-semibold tracking-wider uppercase text-ink-muted">
         {label}
       </span>
       <select
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value || undefined)}
-        className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 truncate"
+        className="w-full px-2 py-1.5 text-xs bg-card border border-line rounded focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 truncate"
       >
         <option value="">All</option>
         {options.map((opt) => (
@@ -111,7 +111,7 @@ export function FilterBar({ filters, onChange, options }: Props) {
         <button
           type="button"
           onClick={() => onChange({})}
-          className="mt-2 text-[11px] text-blue-600 hover:text-blue-700"
+          className="mt-2 text-[11px] text-accent hover:text-accent"
         >
           Clear filters
         </button>

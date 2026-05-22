@@ -7,8 +7,14 @@
  *     show until the operator processes them. Approve = post a comment to
  *     Jira AND log feedback.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+
+import {
+  Inbox as InboxIcon,
+  ListFilter,
+} from 'lucide-react';
+
 
 import {
   AgentInbox,
@@ -34,32 +40,71 @@ import type {
   TicketDetail,
   TicketSummary,
 } from '../lib/types';
-import { useAgentMode } from '../lib/useAgentMode';
-
-import { AgentModeChip } from '../components/AgentModeChip';
 
 
 const NEEDS_ATTENTION = new Set<AgentStatus>(['needs_review', 'escalated']);
 type Source = 'local' | 'jira';
+type SourceFilter = 'all' | 'local' | 'jira';
+type StatusFilter = 'all' | AgentStatus;
+
+
+const SOURCE_OPTIONS: Array<{ key: SourceFilter; label: string }> = [
+  { key: 'all', label: 'All sources' },
+  { key: 'local', label: 'Local tickets' },
+  { key: 'jira', label: 'Jira tickets' },
+];
+
+
+const STATUS_OPTIONS: Array<{ key: StatusFilter; label: string }> = [
+  { key: 'all', label: 'All statuses' },
+  { key: 'escalated', label: 'Escalated' },
+  { key: 'needs_review', label: 'Needs review' },
+  { key: 'auto_drafted', label: 'Auto-drafted' },
+  { key: 'auto_resolved', label: 'Auto-sent' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'rejected', label: 'Rejected' },
+  { key: 'pending', label: 'Pending' },
+  { key: 'skipped', label: 'Skipped' },
+];
 
 
 export function InboxPage() {
   const { ticketKey } = useParams();
   const navigate = useNavigate();
-  const agentMode = useAgentMode();
 
-  // Hold the active source in localStorage so the tab choice survives
-  // page reloads + cross-tab navigation.
-  const [source, setSourceState] = useState<Source>(() => {
+  // Two filter dimensions, both persisted across reloads.
+  //   * source — 'all' (interleave both) | 'local' | 'jira'
+  //   * status — 'all' | any AgentStatus value
+  // Live in the same ListFilter dropdown as two sections.
+  const [sourceFilter, setSourceFilterState] = useState<SourceFilter>(() => {
     const stored = typeof window !== 'undefined'
-      ? window.localStorage.getItem('inboxSource')
+      ? window.localStorage.getItem('inboxFilter')
       : null;
-    return stored === 'jira' ? 'jira' : 'local';
+    if (stored === 'local' || stored === 'jira' || stored === 'all') return stored;
+    return 'all';
   });
-  const setSource = useCallback((s: Source) => {
-    setSourceState(s);
+  const setSourceFilter = useCallback((f: SourceFilter) => {
+    setSourceFilterState(f);
     try {
-      window.localStorage.setItem('inboxSource', s);
+      window.localStorage.setItem('inboxFilter', f);
+    } catch {
+      /* private-mode safe */
+    }
+  }, []);
+
+  const [statusFilter, setStatusFilterState] = useState<StatusFilter>(() => {
+    const stored = typeof window !== 'undefined'
+      ? window.localStorage.getItem('inboxStatusFilter')
+      : null;
+    if (stored && STATUS_OPTIONS.some((o) => o.key === stored)) {
+      return stored as StatusFilter;
+    }
+    return 'all';
+  });
+  const setStatusFilter = useCallback((f: StatusFilter) => {
+    setStatusFilterState(f);
+    try {
+      window.localStorage.setItem('inboxStatusFilter', f);
     } catch {
       /* private-mode safe */
     }
@@ -152,8 +197,8 @@ export function InboxPage() {
     const handler = () => {
       refresh();
       // Sessions changed (typically post-approve) — also refresh Jira list
-      // so its derived statuses update.
-      if (source === 'jira') refreshJira();
+      // so derived statuses update.
+      if (sourceFilter !== 'local') refreshJira();
     };
     window.addEventListener('agent-sessions-changed', handler);
 
@@ -162,21 +207,20 @@ export function InboxPage() {
       window.removeEventListener('agent-sessions-changed', handler);
       if (intervalId) clearInterval(intervalId);
     };
-  }, [refresh, refreshJira, source]);
+  }, [refresh, refreshJira, sourceFilter]);
 
-  // Jira: fetch on mount regardless of active source so the 'Jira tickets (N)'
-  // tab badge shows the real count before the operator clicks. Otherwise
-  // the badge sits at (0) and the operator dismisses the tab thinking
-  // there's nothing there.
+  // Jira: fetch on mount regardless of the active filter so the count is
+  // accurate even while viewing 'local'. Otherwise the operator switches
+  // filters and stares at (0) until the first paint.
   useEffect(() => {
     refreshJira();
   }, [refreshJira]);
 
-  // Refetch when the operator switches to the Jira tab so the list isn't
-  // a stale snapshot from page load.
+  // Refetch when the operator switches to a filter that surfaces Jira so
+  // the list isn't a stale snapshot from page load.
   useEffect(() => {
-    if (source === 'jira') refreshJira();
-  }, [source, refreshJira]);
+    if (sourceFilter !== 'local') refreshJira();
+  }, [sourceFilter, refreshJira]);
 
   async function triggerBatch() {
     try {
@@ -187,35 +231,20 @@ export function InboxPage() {
     }
   }
 
-  // Ticket detail fetch — routes through the right backend depending on source.
-  useEffect(() => {
-    if (!ticketKey) {
-      setActiveTicket(null);
-      return;
-    }
-    let cancelled = false;
-    setActiveLoading(true);
-    const fetcher = source === 'jira' ? getJiraTicket : getTicket;
-    fetcher(ticketKey)
-      .then((data) => {
-        if (!cancelled) setActiveTicket(data);
-      })
-      .catch(() => {
-        if (!cancelled) setActiveTicket(null);
-      })
-      .finally(() => {
-        if (!cancelled) setActiveLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [ticketKey, source]);
-
   const sessionByTicketId = useMemo(() => {
     const m = new Map<string, AgentSessionSummary>();
     for (const s of sessions) m.set(s.ticket_id, s);
     return m;
   }, [sessions]);
+
+  // Per-ticket source map so the detail fetcher knows which backend to
+  // hit — needed when filter='all' interleaves both sources.
+  const sourceByKey = useMemo(() => {
+    const m = new Map<string, Source>();
+    for (const t of localTickets) m.set(t.key, 'local');
+    for (const t of jiraTickets) m.set(t.key, 'jira');
+    return m;
+  }, [localTickets, jiraTickets]);
 
   const localInboxRows: InboxRow[] = useMemo(() => {
     const annotated: InboxRow[] = localTickets.map((t) => ({
@@ -229,26 +258,105 @@ export function InboxPage() {
     );
   }, [localTickets, sessionByTicketId]);
 
-  // Jira shows ALL tickets — agent state appears once the operator processes
-  // each one, and any decided ticket still stays visible (its session pill
-  // shows "approved" / "rejected").
   const jiraInboxRows: InboxRow[] = useMemo(() => {
-    return jiraTickets.map((t) => ({
-      ticket: t,
-      session: sessionByTicketId.get(t.key),
-    }));
+    return sortInbox(
+      jiraTickets.map((t) => ({
+        ticket: t,
+        session: sessionByTicketId.get(t.key),
+      })),
+    );
   }, [jiraTickets, sessionByTicketId]);
 
-  const inboxRows = source === 'jira' ? jiraInboxRows : localInboxRows;
-  const rowsLoading = source === 'jira' ? jiraLoading : ticketsLoading;
-  const rowsError = source === 'jira' ? jiraError : ticketsError;
+  const inboxRows: InboxRow[] = useMemo(() => {
+    let rows: InboxRow[];
+    if (sourceFilter === 'local') rows = localInboxRows;
+    else if (sourceFilter === 'jira') rows = jiraInboxRows;
+    // 'all' — merge then sort by timestamp so newest tickets win
+    // regardless of source.
+    else rows = sortInbox([...localInboxRows, ...jiraInboxRows]);
 
-  // Clear selection when switching tabs so we don't show a /tickets ticket
-  // under the Jira tab or vice versa.
+    if (statusFilter !== 'all') {
+      rows = rows.filter(
+        (r) => (r.session?.derived_status ?? 'pending') === statusFilter,
+      );
+    }
+    return rows;
+  }, [sourceFilter, statusFilter, localInboxRows, jiraInboxRows]);
+
+  // For 'all', wait until BOTH sources are loaded before rendering — &&
+  // would let the local rows render first and then visibly grow as the
+  // Jira batch arrives, which felt like a reorder flash.
+  const rowsLoading =
+    sourceFilter === 'jira'
+      ? jiraLoading
+      : sourceFilter === 'local'
+      ? ticketsLoading
+      : ticketsLoading || jiraLoading;
+  const rowsError = sourceFilter === 'jira' ? jiraError : ticketsError;
+
+  // Active source is best-effort from the lookup map; the fetcher below
+  // falls back to the other backend if this guess is wrong (e.g. when
+  // the operator deep-links to a ticket that isn't in either list yet).
+  const guessedSource: Source = ticketKey
+    ? sourceByKey.get(ticketKey) ?? 'local'
+    : 'local';
+  const [activeSource, setActiveSource] = useState<Source>('local');
+
+  // Ticket detail fetch — try the guessed source first, fall back to the
+  // other one on failure. Lets deep-links from the Activity Log (where
+  // the ticket may already be decided and absent from the inbox list)
+  // load reliably regardless of source.
   useEffect(() => {
-    if (ticketKey) navigate('/inbox', { replace: true });
+    if (!ticketKey) {
+      setActiveTicket(null);
+      return;
+    }
+    let cancelled = false;
+    setActiveLoading(true);
+    setActiveTicket(null);
+    (async () => {
+      const order: Source[] =
+        guessedSource === 'jira' ? ['jira', 'local'] : ['local', 'jira'];
+      for (const src of order) {
+        try {
+          const fetcher = src === 'jira' ? getJiraTicket : getTicket;
+          const data = await fetcher(ticketKey);
+          if (!cancelled) {
+            setActiveTicket(data);
+            setActiveSource(src);
+            setActiveLoading(false);
+          }
+          return;
+        } catch {
+          /* try the next source */
+        }
+      }
+      if (!cancelled) {
+        setActiveTicket(null);
+        setActiveLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticketKey, guessedSource]);
+
+  // Clear selection when the operator EXPLICITLY changes the filter and
+  // the active row is no longer visible. We track the last-seen filter
+  // values in a ref and only act on an actual change — a simple boolean
+  // "initial mount" flag breaks under StrictMode dev double-invocation
+  // (second run sees flag already flipped and redirects on mount).
+  const lastSeenFilter = useRef<string | null>(null);
+  useEffect(() => {
+    const key = `${sourceFilter}:${statusFilter}`;
+    const prev = lastSeenFilter.current;
+    lastSeenFilter.current = key;
+    if (prev === null || prev === key) return; // initial run or no real change
+    if (!ticketKey) return;
+    const still = inboxRows.some((r) => r.ticket.key === ticketKey);
+    if (!still) navigate('/inbox', { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source]);
+  }, [sourceFilter, statusFilter]);
 
   // Auto-select first row when no key in URL.
   useEffect(() => {
@@ -257,217 +365,302 @@ export function InboxPage() {
     navigate(`/inbox/${inboxRows[0].ticket.key}`, { replace: true });
   }, [ticketKey, inboxRows, navigate]);
 
-  // After a local decision the ticket leaves the inbox; for Jira we keep it.
+  // After a LOCAL decision the just-approved/rejected row leaves the
+  // visible list — auto-clear the URL so the operator isn't stuck on a
+  // dead selection. We only redirect when the active ticket WAS visible
+  // a moment ago and is now gone; landing on a deep link to a decided
+  // ticket (e.g. from the Activity Log) must NOT trigger this.
+  const prevVisibleKeys = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (source !== 'local') return;
-    if (!ticketKey) return;
-    const still = inboxRows.some((r) => r.ticket.key === ticketKey);
-    if (!still) {
+    const now = new Set(inboxRows.map((r) => r.ticket.key));
+    const prev = prevVisibleKeys.current;
+    if (
+      activeSource === 'local' &&
+      ticketKey &&
+      prev.has(ticketKey) &&
+      !now.has(ticketKey)
+    ) {
       navigate('/inbox', { replace: true });
     }
-  }, [inboxRows, ticketKey, navigate, source]);
+    prevVisibleKeys.current = now;
+  }, [inboxRows, ticketKey, navigate, activeSource]);
 
-  const escalated = metrics?.escalated ?? 0;
-  const needsReview = metrics?.needs_review ?? 0;
-  const totalPending = escalated + needsReview;
-  const totalProcessed = metrics?.processed ?? 0;
-  const approvalRate = metrics
-    ? Math.round(metrics.approval_rate * 100)
-    : 0;
+  const sourceLabel = SOURCE_OPTIONS.find((o) => o.key === sourceFilter)?.label ?? 'All';
+  const statusLabel = STATUS_OPTIONS.find((o) => o.key === statusFilter)?.label ?? 'All';
+  const filteredCount = inboxRows.length;
+  const showLocalCTAs =
+    sourceFilter !== 'jira' && metrics != null && metrics.processed < metrics.total;
+  const activeFilterCount =
+    (sourceFilter === 'all' ? 0 : 1) + (statusFilter === 'all' ? 0 : 1);
+
+  const showLoadingState = !initialLoaded || rowsLoading;
+  const showEmptyList = !showLoadingState && !rowsError && inboxRows.length === 0;
 
   return (
     <div className="h-full flex flex-col">
-      <header className="px-6 py-3 border-b border-panel-border bg-panel-surface space-y-2">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-semibold tracking-tight text-slate-900">
-              Inbox
-            </h1>
-            {agentMode && (
-              <AgentModeChip mode={agentMode} size="sm" prefix="Default:" />
+      {/* Full-width header row — Inbox title + icons live in the left
+          half (over the list), right half is intentionally empty. The
+          border-b runs edge-to-edge so the line separates header from
+          everything below across both panes. */}
+      <div className="flex border-b border-line-subtle shrink-0">
+        <header className="w-[360px] h-12 px-4 flex items-center border-r border-line-subtle shrink-0">
+          <h1 className="text-base font-semibold text-ink tracking-tight flex items-center gap-2 min-w-0">
+            <span>Inbox</span>
+            {activeFilterCount > 0 && (
+              <span className="text-ink-muted font-normal truncate">
+                ·{' '}
+                {sourceFilter !== 'all' && sourceLabel.replace(' tickets', '')}
+                {sourceFilter !== 'all' && statusFilter !== 'all' && ', '}
+                {statusFilter !== 'all' && statusLabel}{' '}
+                ({filteredCount})
+              </span>
             )}
-            <div className="flex items-center gap-1">
-              <SourceTab
-                active={source === 'local'}
-                onClick={() => setSource('local')}
-                label="Local tickets"
-                count={localTickets.length}
-              />
-              <SourceTab
-                active={source === 'jira'}
-                onClick={() => setSource('jira')}
-                label="Jira tickets"
-                count={jiraTickets.length}
-              />
-            </div>
-          </div>
-          <div className="flex items-center gap-x-5 text-[11px]">
-            {source === 'local' ? (
-              <>
-                <Metric label="Processed" value={`${totalProcessed}`} />
-                <Metric label="Pending" value={`${totalPending}`} tone="text-amber-700" />
-                <Metric
-                  label="Approval rate"
-                  value={metrics && metrics.approved + metrics.rejected > 0 ? `${approvalRate}%` : '—'}
-                />
-              </>
-            ) : (
-              <Metric label="Total in KAN" value={`${jiraTickets.length}`} />
-            )}
-          </div>
-        </div>
-        {source === 'local' && batch?.running ? (
-          <div className="flex items-center gap-2 text-[11px] text-blue-700">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-            Processing tickets… {batch.processed} / {batch.total}
-            {batch.current_ticket && (
-              <span className="font-mono text-slate-500">{batch.current_ticket}</span>
-            )}
-          </div>
-        ) : source === 'local' && metrics && metrics.processed < metrics.total ? (
-          <div className="flex items-center gap-3 text-[11px]">
-            <span className="text-slate-500">
-              {metrics.total - metrics.processed} ticket{metrics.total - metrics.processed === 1 ? '' : 's'} not yet processed by the agent.
-            </span>
-            <button
-              type="button"
-              onClick={triggerBatch}
-              className="px-2.5 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
-            >
-              Process pending tickets
-            </button>
-          </div>
-        ) : null}
-        {source === 'jira' && (
-          <p className="text-[11px] text-slate-500">
-            Live from your Jira project. Pick a ticket and click{' '}
-            <span className="font-medium text-slate-700">Process with agent</span>{' '}
-            to classify → retrieve → draft. Approve writes the draft as a Jira
-            comment.
-          </p>
-        )}
-      </header>
-      <div className="flex-1 flex overflow-hidden">
-        {source === 'local' && (!initialLoaded || rowsLoading) ? (
-          <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
-            Loading inbox…
-          </div>
-        ) : source === 'jira' && rowsLoading && jiraTickets.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
-            Loading Jira tickets…
-          </div>
-        ) : source === 'jira' && rowsError ? (
-          <div className="flex-1 flex items-center justify-center text-sm text-red-600 px-8 text-center">
-            {rowsError}
-          </div>
-        ) : inboxRows.length === 0 ? (
-          source === 'local' ? (
-            <AllCaughtUp running={batch?.running ?? false} processed={batch?.processed ?? 0} total={batch?.total ?? 0} />
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
-              No tickets in this Jira project.
-            </div>
-          )
-        ) : (
-          <>
-            <AgentInbox
-              rows={inboxRows}
-              loading={false}
-              error={rowsError}
+          </h1>
+          <div className="ml-auto flex items-center gap-1">
+            <InboxFilterDropdown
+              sourceFilter={sourceFilter}
+              statusFilter={statusFilter}
+              onSourceChange={setSourceFilter}
+              onStatusChange={setStatusFilter}
+              activeCount={activeFilterCount}
             />
-            {activeLoading ? (
-              <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
-                Loading ticket…
+          </div>
+        </header>
+        <div className="flex-1 h-12" aria-hidden />
+      </div>
+
+      {/* Body: list (left, 360px) + ticket detail (right, flex-1) */}
+      <div className="flex-1 flex min-h-0">
+        <div className="w-[360px] shrink-0 flex flex-col border-r border-line-subtle min-h-0">
+          <BatchInlineNotice
+            sourceFilter={sourceFilter}
+            batch={batch}
+            showCTA={!!showLocalCTAs}
+            metrics={metrics}
+            onTrigger={triggerBatch}
+          />
+          {showLoadingState ? (
+            <div className="flex-1 flex items-center justify-center text-sm text-ink-muted">
+              Loading inbox…
+            </div>
+          ) : rowsError ? (
+            <div className="flex-1 flex items-center justify-center px-4 text-sm text-red-600 text-center">
+              {rowsError}
+            </div>
+          ) : showEmptyList ? (
+            sourceFilter === 'local' ? (
+              <div className="flex-1 flex flex-col items-center justify-center px-4 text-center">
+                <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 mb-3">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </div>
+                <p className="text-sm text-ink">All caught up</p>
+                <p className="mt-0.5 text-xs text-ink-muted">
+                  No tickets need your attention.
+                </p>
               </div>
-            ) : activeTicket ? (
-              <AgentTicketDetail ticket={activeTicket} source={source} />
             ) : (
-              <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
-                Pick a ticket from the inbox.
+              <div className="flex-1 flex items-center justify-center text-sm text-ink-muted">
+                No tickets in this view.
               </div>
-            )}
-          </>
+            )
+          ) : (
+            <AgentInbox rows={inboxRows} loading={false} error={rowsError} />
+          )}
+        </div>
+
+        <div className="flex-1 flex flex-col min-w-0">
+          {activeLoading ? (
+            <div className="flex-1 flex items-center justify-center text-sm text-ink-muted">
+              Loading ticket…
+            </div>
+          ) : activeTicket ? (
+            <AgentTicketDetail ticket={activeTicket} source={activeSource} />
+          ) : (
+            <EmptyTicketDetail />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function InboxFilterDropdown({
+  sourceFilter,
+  statusFilter,
+  onSourceChange,
+  onStatusChange,
+  activeCount,
+}: {
+  sourceFilter: SourceFilter;
+  statusFilter: StatusFilter;
+  onSourceChange: (next: SourceFilter) => void;
+  onStatusChange: (next: StatusFilter) => void;
+  activeCount: number;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Click-outside dismiss — single document-level handler, only active
+  // while the popover is open.
+  useEffect(() => {
+    if (!open) return;
+    function onClickAway(e: MouseEvent) {
+      const target = e.target as Element | null;
+      if (target && !target.closest('[data-inbox-filter-root]')) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClickAway);
+    return () => document.removeEventListener('mousedown', onClickAway);
+  }, [open]);
+
+  const highlighted = open || activeCount > 0;
+
+  return (
+    <div className="relative" data-inbox-filter-root>
+      <button
+        type="button"
+        title="Filter"
+        onClick={() => setOpen((v) => !v)}
+        className={`w-7 h-7 inline-flex items-center justify-center rounded-md transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 outline-none ${
+          highlighted
+            ? 'bg-hover text-ink-body'
+            : 'text-ink-muted hover:bg-hover hover:text-ink-body'
+        }`}
+      >
+        <ListFilter width={16} height={16} strokeWidth={1.75} />
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-1 w-52 bg-card border border-line rounded-md shadow-md py-1 z-20">
+          <DropdownSection
+            label="Source"
+            options={SOURCE_OPTIONS}
+            current={sourceFilter}
+            onPick={(k) => onSourceChange(k as SourceFilter)}
+          />
+          <div className="my-1 border-t border-line-subtle" />
+          <DropdownSection
+            label="Status"
+            options={STATUS_OPTIONS}
+            current={statusFilter}
+            onPick={(k) => onStatusChange(k as StatusFilter)}
+          />
+          {activeCount > 0 && (
+            <>
+              <div className="my-1 border-t border-line-subtle" />
+              <button
+                type="button"
+                onClick={() => {
+                  onSourceChange('all');
+                  onStatusChange('all');
+                }}
+                className="w-full text-left px-3 py-1.5 text-[12px] text-ink-muted hover:text-ink-body hover:bg-hover transition-colors duration-150"
+              >
+                Clear all filters
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function DropdownSection({
+  label,
+  options,
+  current,
+  onPick,
+}: {
+  label: string;
+  options: Array<{ key: string; label: string }>;
+  current: string;
+  onPick: (key: string) => void;
+}) {
+  return (
+    <div>
+      <div className="px-3 pt-1 pb-0.5 text-[10px] font-medium uppercase tracking-wider text-ink-muted">
+        {label}
+      </div>
+      {options.map((opt) => {
+        const active = opt.key === current;
+        return (
+          <button
+            key={opt.key}
+            type="button"
+            onClick={() => onPick(opt.key)}
+            className={`w-full text-left px-3 py-1 text-[13px] flex items-center justify-between gap-2 transition-colors duration-150 ${
+              active
+                ? 'text-ink font-medium'
+                : 'text-ink-body hover:bg-hover hover:text-ink'
+            }`}
+          >
+            <span>{opt.label}</span>
+            {active && <span className="text-xs text-accent">✓</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+
+function BatchInlineNotice({
+  sourceFilter,
+  batch,
+  showCTA,
+  metrics,
+  onTrigger,
+}: {
+  sourceFilter: SourceFilter;
+  batch: BatchStatus | null;
+  showCTA: boolean;
+  metrics: AgentMetrics | null;
+  onTrigger: () => void;
+}) {
+  // Thin info row that surfaces batch state without bloating the header.
+  // Renders nothing when there's nothing actionable.
+  if (sourceFilter === 'jira') return null;
+  if (batch?.running) {
+    return (
+      <div className="px-4 py-1.5 border-b border-line-subtle flex items-center gap-2 text-xs text-accent-fg">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+        Processing tickets… {batch.processed} / {batch.total}
+        {batch.current_ticket && (
+          <span className="font-mono text-ink-muted">· {batch.current_ticket}</span>
         )}
       </div>
-    </div>
-  );
-}
-
-
-function SourceTab({
-  active,
-  onClick,
-  label,
-  count,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  count: number;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex items-center gap-1.5 px-3 py-1 text-sm rounded-md transition-colors ${
-        active
-          ? 'bg-white text-slate-900 font-medium border border-slate-200 shadow-sm'
-          : 'text-slate-600 hover:bg-white/60 hover:text-slate-900 border border-transparent'
-      }`}
-    >
-      <span>{label}</span>
-      <span className="text-[11px] font-mono text-slate-400 tabular-nums">({count})</span>
-    </button>
-  );
-}
-
-
-function Metric({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: string;
-}) {
-  return (
-    <div className="flex items-baseline gap-1.5">
-      <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
-        {label}
-      </span>
-      <span className={`text-sm font-mono tabular-nums font-medium ${tone ?? 'text-slate-900'}`}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-
-function AllCaughtUp({
-  running,
-  processed,
-  total,
-}: {
-  running: boolean;
-  processed: number;
-  total: number;
-}) {
-  return (
-    <div className="flex-1 flex items-center justify-center">
-      <div className="text-center">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 mb-4">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-        </div>
-        <h2 className="text-xl font-semibold tracking-tight text-slate-900">All caught up</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          {running
-            ? `Agent is still processing tickets (${processed} / ${total}). New ones will appear here as they need review.`
-            : 'No tickets need your attention right now. Check the Activity Log for the full audit trail.'}
-        </p>
+    );
+  }
+  if (showCTA && metrics) {
+    const remaining = metrics.total - metrics.processed;
+    return (
+      <div className="px-4 py-1.5 border-b border-line-subtle flex items-center gap-3 text-xs">
+        <span className="text-ink-muted">
+          {remaining} ticket{remaining === 1 ? '' : 's'} not yet processed
+        </span>
+        <button
+          type="button"
+          onClick={onTrigger}
+          className="inline-flex items-center h-6 px-2.5 rounded-md text-xs font-medium text-white bg-accent hover:bg-accent-hover transition-colors duration-150"
+        >
+          Process {remaining}
+        </button>
       </div>
+    );
+  }
+  return null;
+}
+
+
+function EmptyTicketDetail() {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center text-ink-muted">
+      <InboxIcon width={28} height={28} strokeWidth={1.5} className="text-ink-faint mb-3" />
+      <p className="text-sm">Select a ticket to view details</p>
     </div>
   );
 }
+
+

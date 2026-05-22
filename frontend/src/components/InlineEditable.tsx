@@ -105,7 +105,7 @@ export function InlineEditable({
             type="button"
             onClick={startEdit}
             aria-label={`Edit ${ariaLabel ?? ''}`.trim()}
-            className="opacity-0 group-hover/edit:opacity-100 transition-opacity text-slate-400 hover:text-blue-600 shrink-0"
+            className="opacity-0 group-hover/edit:opacity-100 transition-opacity text-ink-muted hover:text-accent shrink-0"
           >
             <PencilIcon />
           </button>
@@ -119,7 +119,7 @@ export function InlineEditable({
           type="button"
           onClick={startEdit}
           aria-label={`Edit ${ariaLabel ?? ''}`.trim()}
-          className="opacity-0 group-hover/edit:opacity-100 transition-opacity text-slate-400 hover:text-blue-600 shrink-0 mt-1"
+          className="opacity-0 group-hover/edit:opacity-100 transition-opacity text-ink-muted hover:text-accent shrink-0 mt-1"
         >
           <PencilIcon />
         </button>
@@ -140,7 +140,7 @@ export function InlineEditable({
         }}
         rows={rows}
         disabled={submitting}
-        className="w-full px-2 py-1.5 text-sm bg-white border-2 border-blue-400 rounded focus:outline-none focus:ring-2 focus:ring-blue-500/15 resize-y font-sans leading-relaxed"
+        className="w-full px-2 py-1.5 text-sm bg-card border-2 border-accent/60 rounded focus:outline-none focus:ring-2 focus:ring-accent/20 resize-y font-sans leading-relaxed"
       />
       {error && <div className="mt-1 text-[11px] text-red-600">{error}</div>}
       <div className="mt-1.5 flex items-center justify-end gap-2">
@@ -148,7 +148,7 @@ export function InlineEditable({
           type="button"
           onClick={cancel}
           disabled={submitting}
-          className="px-2.5 py-1 text-xs text-slate-600 rounded hover:bg-slate-100"
+          className="px-2.5 py-1 text-xs text-ink-body rounded hover:bg-hover"
         >
           Cancel
         </button>
@@ -156,7 +156,7 @@ export function InlineEditable({
           type="button"
           onClick={submit}
           disabled={submitting || !draft.trim()}
-          className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
+          className="px-3 py-1 text-xs font-medium text-white bg-accent rounded hover:bg-accent-hover disabled:bg-line disabled:text-ink-muted"
         >
           {submitting ? 'Submitting…' : 'Submit suggestion'}
         </button>

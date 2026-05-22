@@ -14,14 +14,14 @@ import type { AgentMode } from '../lib/types';
 
 const TONE: Record<AgentMode, { pill: string; dot: string; label: string; tip: string }> = {
   shadow: {
-    pill: 'bg-slate-100 text-slate-700 border-slate-200',
+    pill: 'bg-hover text-ink-body border-line',
     dot: 'bg-slate-400',
     label: 'Shadow',
     tip: 'Approve only logs feedback locally. Jira is not touched.',
   },
   assisted: {
-    pill: 'bg-blue-50 text-blue-700 border-blue-200',
-    dot: 'bg-blue-500',
+    pill: 'bg-accent-subtle text-accent border-accent/30',
+    dot: 'bg-accent',
     label: 'Assisted',
     tip: 'Approve posts the (clean) draft as a Jira comment.',
   },

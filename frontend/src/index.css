@@ -1,57 +1,153 @@
 @import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+ * Theme tokens — Linear-inspired light theme as default, dark via class.
+ *
+ * Sidebar shares the app background so it blends seamlessly with the
+ * shell; the content area "floats" as a rounded white panel inset by p-2.
+ * Every component reads these via Tailwind utilities (bg-app, bg-card,
+ * text-ink, border-line / border-strong, etc.).
+ * ------------------------------------------------------------------------ */
+
+:root,
+:root.light {
+  /* Surfaces */
+  --c-app: 245 245 245;             /* #F5F5F5  shell + sidebar */
+  --c-card: 255 255 255;            /* #FFFFFF  floating content panel + cards */
+  --c-elevated: 255 255 255;        /* dropdowns / modals */
+  --c-hover: 235 235 235;           /* #EBEBEB  row + sidebar item hover */
+  --c-active: 232 232 232;          /* #E8E8E8  active sidebar item */
+
+  /* Borders */
+  --c-line: 229 229 229;            /* #E5E5E5  default */
+  --c-line-subtle: 238 238 238;     /* #EEEEEE  inner dividers */
+  --c-line-strong: 212 212 212;     /* #D4D4D4  outer floating-panel border */
+
+  /* Text */
+  --c-ink: 26 26 26;                /* #1A1A1A  primary */
+  --c-body: 107 107 107;            /* #6B6B6B  secondary */
+  --c-muted: 155 155 155;           /* #9B9B9B  tertiary / placeholders */
+  --c-faint: 155 155 155;           /* alias for tertiary */
+
+  /* Accent — indigo */
+  --c-accent: 99 102 241;           /* #6366F1 */
+  --c-accent-hover: 84 87 229;      /* #5457E5 */
+  --c-accent-subtle: 238 242 255;   /* #EEF2FF */
+  --c-accent-fg: 79 70 229;         /* #4F46E5 — accent text on light */
+
+  /* Status colors — use Tailwind's bg-emerald / bg-red / bg-amber etc.
+     in components. The CSS vars below just expose the brand palette if
+     a component needs the raw RGB. */
+  --c-success: 34 197 94;
+  --c-warning: 245 158 11;
+  --c-danger: 239 68 68;
+  --c-info: 59 130 246;
+}
+
+:root.dark {
+  --c-app: 22 22 22;                /* #161616 */
+  --c-card: 30 30 30;               /* #1E1E1E */
+  --c-elevated: 37 37 37;
+  --c-hover: 42 42 42;
+  --c-active: 48 48 48;
+
+  --c-line: 46 46 46;
+  --c-line-subtle: 37 37 37;
+  --c-line-strong: 58 58 58;
+
+  --c-ink: 245 245 245;
+  --c-body: 160 160 160;
+  --c-muted: 102 102 102;
+  --c-faint: 102 102 102;
+
+  --c-accent: 129 140 248;          /* #818CF8 lifted indigo for dark */
+  --c-accent-hover: 99 102 241;
+  --c-accent-subtle: 30 27 75;
+  --c-accent-fg: 165 180 252;
+
+  --c-success: 34 197 94;
+  --c-warning: 245 158 11;
+  --c-danger: 239 68 68;
+  --c-info: 96 165 250;
+}
 
 html, body, #root {
   height: 100%;
 }
 
 body {
-  @apply font-sans text-slate-900 bg-panel-bg antialiased;
+  @apply font-sans bg-app text-ink-body antialiased;
+  font-size: 13px;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
 }
 
-/* Subtle scrollbars on dark sidebar + light panel */
+/* Default heading sizes — Linear keeps the hierarchy tight. */
+h1 { @apply text-lg font-semibold text-ink tracking-tight; }
+h2 { @apply text-sm font-semibold text-ink; }
+h3 { @apply text-sm font-semibold text-ink; }
+
+/* ---------- Scrollbar ---------- */
 .scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+  scrollbar-color: rgba(107, 107, 107, 0.55) transparent;
 }
 .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
-.scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.35); border-radius: 8px; }
-.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.55); }
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(107, 107, 107, 0.55);
+  border-radius: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(107, 107, 107, 0.75);
+}
 .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
 
-/* Inline footnote-style citation superscripts in chat answers. */
+/* ---------- Inline citation pill (chat answers) ---------- */
 .sp-citation {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 1.1rem;
-  height: 1.1rem;
-  padding: 0 0.3rem;
-  margin: 0 0.15rem;
-  border-radius: 9999px;
-  background: #dbeafe;
-  color: #1d4ed8;
-  font-size: 0.65rem;
-  font-weight: 700;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.28rem;
+  margin: 0 0.12rem;
+  border-radius: 4px;
+  background: rgb(var(--c-accent-subtle));
+  color: rgb(var(--c-accent-fg));
+  font-size: 0.62rem;
+  font-weight: 600;
+  font-family: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
   text-decoration: none;
   vertical-align: super;
   line-height: 1;
   transition: background 120ms ease, color 120ms ease;
 }
 .sp-citation:hover {
-  background: #2563eb;
+  background: rgb(var(--c-accent));
   color: #ffffff;
 }
 .sp-citation-unknown {
-  background: #f1f5f9;
-  color: #64748b;
+  background: rgb(var(--c-hover));
+  color: rgb(var(--c-muted));
+}
+/* Softer chip for citations that resolved against the full corpus but
+   were NOT in the retrieved top-K — the model "knew" about this source
+   from elsewhere. Still numbered and clickable; just visually quieter
+   so the operator can tell the two apart at a glance. */
+.sp-citation.sp-citation-soft {
+  background: rgb(var(--c-hover));
+  color: rgb(var(--c-body));
+}
+.sp-citation.sp-citation-soft:hover {
+  background: rgb(var(--c-line-strong));
+  color: rgb(var(--c-ink));
 }
 
-/* Wikipedia-style hover preview card on citation pills. */
+/* Hover preview card */
 .sp-citation-wrap {
   position: relative;
   display: inline-block;
@@ -63,10 +159,10 @@ body {
   left: 50%;
   margin-top: 6px;
   width: 280px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+  background: rgb(var(--c-card));
+  border: 1px solid rgb(var(--c-line));
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
   padding: 10px 12px;
   z-index: 50;
   opacity: 0;
@@ -90,13 +186,13 @@ body {
   display: block;
   font-weight: 600;
   font-size: 0.8rem;
-  color: #0f172a;
+  color: rgb(var(--c-ink));
   line-height: 1.35;
   margin-bottom: 4px;
 }
 .sp-citation-popover-desc {
-  font-size: 0.7rem;
-  color: #475569;
+  font-size: 0.72rem;
+  color: rgb(var(--c-body));
   line-height: 1.45;
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -106,7 +202,7 @@ body {
 }
 .sp-citation-popover-cta {
   display: block;
-  font-size: 0.65rem;
-  color: #2563eb;
+  font-size: 0.66rem;
+  color: rgb(var(--c-accent));
   font-weight: 500;
 }

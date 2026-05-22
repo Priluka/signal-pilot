@@ -1,10 +1,17 @@
-/** Right column of the Agent Feed — what the agent did for this one ticket.
+/** Right column of the Agent Feed — what the agent did for one ticket.
  *
- * Read-mostly: the agent has already classified / retrieved / drafted in the
- * background. The operator's job is to review the timeline + the matched
- * playbook + the draft and decide Approve / Edit / Reject — but only when
- * the derived status calls for human input. Auto-resolved, skipped, and
- * already-decided tickets just display their final state.
+ * Linear-style: tight rhythm (space-y-5), narrow max-width for readability,
+ * one consistent card pattern, a single accent for primary actions. The
+ * draft reply is the hero section — slightly more padding, the right-most
+ * primary button is the operator's main action.
+ *
+ * Sections, top to bottom:
+ *   1. Ticket header (ID + status + title + meta + tags)        — separator after
+ *   2. Original message                                          — quiet inset card
+ *   3. Processing timeline                                       — vertical dots w/ connecting line
+ *   4. Classification                                            — compact card
+ *   5. Matched playbook                                          — emphasised card with link
+ *   6. Draft reply                                               — hero card + decision row OR decision banner
  */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -26,12 +33,28 @@ import { useAgentMode } from '../lib/useAgentMode';
 import { AgentModeChip } from './AgentModeChip';
 import { AgentStatusPill } from './AgentStatusPill';
 import { DiffView } from './DiffView';
-import { Chip, SectionHeading } from './ui';
 
 
 type FeedbackKind = 'approved' | 'edited' | 'rejected';
 export type TicketSource = 'local' | 'jira';
 
+
+// ---------------------------------------------------------------------------
+// Shared atoms
+// ---------------------------------------------------------------------------
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-[11px] font-medium uppercase tracking-wider text-ink-muted mb-3">
+      {children}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 
 export function AgentTicketDetail({
   ticket,
@@ -43,8 +66,7 @@ export function AgentTicketDetail({
   const agentMode = useAgentMode();
   // Approve posts to Jira only when the source IS Jira AND the operator
   // has explicitly enabled outbound writes (assisted or autonomous). In
-  // shadow, the comment never leaves our DB. Null mode (still loading)
-  // defaults to safe behaviour — no outbound write.
+  // shadow, the comment never leaves our DB.
   const postsToJira = source === 'jira' && agentMode != null && agentMode !== 'shadow';
   const [session, setSession] = useState<AgentSessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -106,12 +128,6 @@ export function AgentTicketDetail({
         ? editedText
         : null;
     try {
-      // Jira-side write happens ONLY when:
-      //   * the ticket is from Jira (not the local sample), AND
-      //   * the agent is NOT in shadow mode (shadow is feedback-only), AND
-      //   * the operator is approving / approving-with-edits (never on reject)
-      // If Jira rejects the comment we surface the error and skip the
-      // local feedback log so the operator can retry without double-counting.
       if (postsToJira && kind !== 'rejected') {
         await postJiraComment({
           issue_key: ticket.key,
@@ -138,8 +154,7 @@ export function AgentTicketDetail({
     setProcessing(true);
     setProcessError(null);
     try {
-      const s =
-        source === 'jira' ? await processJiraTicket(ticket.key) : null;
+      const s = source === 'jira' ? await processJiraTicket(ticket.key) : null;
       if (s) {
         setSession(s);
         setEditedText(s.edited_text ?? s.draft?.draft ?? '');
@@ -156,7 +171,7 @@ export function AgentTicketDetail({
     try {
       await deleteAgentSession(ticket.key);
     } catch {
-      // non-blocking
+      /* non-blocking */
     }
     setSession(null);
     setEditing(false);
@@ -165,8 +180,6 @@ export function AgentTicketDetail({
   }
 
   const status: AgentStatus = session?.derived_status ?? 'pending';
-  // Autonomous mode posts the comment without operator action — suppress
-  // the decision row and show an immutable green banner instead.
   const isAutoPosted = Boolean(session?.auto_posted_at);
   const isActionable =
     !isAutoPosted && (status === 'needs_review' || status === 'escalated');
@@ -176,15 +189,19 @@ export function AgentTicketDetail({
 
   return (
     <div className="flex-1 overflow-y-auto scrollbar-thin">
-      <div className="max-w-4xl mx-auto px-8 py-6 space-y-6">
+      <div className="max-w-3xl mx-auto p-6 space-y-5">
         <TicketHeader
           ticket={ticket}
           status={status}
           processedMode={session?.processed_mode ?? null}
         />
 
+        {/* Original message — quiet inset card right after the header so
+            the operator reads the prompt before the agent's reaction. */}
+        <OriginalMessage description={ticket.description ?? ''} />
+
         {loading && (
-          <div className="text-sm text-slate-400">Loading session…</div>
+          <div className="text-sm text-ink-muted">Loading session…</div>
         )}
         {error && <div className="text-sm text-red-600">{error}</div>}
 
@@ -214,8 +231,9 @@ export function AgentTicketDetail({
                 }
               />
             )}
+
             {session.draft && (
-              <DraftPanel
+              <DraftSection
                 session={session}
                 editing={editing}
                 editedText={editedText}
@@ -226,75 +244,31 @@ export function AgentTicketDetail({
                   setEditedText(session.draft?.draft ?? '');
                 }}
                 hasEdits={hasEdits}
-              />
-            )}
-
-            {isAutoPosted && (
-              <AutoResolvedBanner
-                postedAt={session.auto_posted_at!}
+                postsToJira={postsToJira}
+                isActionable={isActionable}
+                isHistorical={isHistorical}
+                isAutoPosted={isAutoPosted}
+                submitting={submitting}
+                submitError={submitError}
+                onApprove={() => decide(hasEdits ? 'edited' : 'approved')}
+                onReject={() => decide('rejected')}
+                onRedo={redo}
                 jiraUrl={session.jira_browse_url ?? null}
                 ticketKey={ticket.key}
               />
             )}
 
-            {isActionable && (
-              <DecisionRow
-                hasEdits={hasEdits}
-                submitting={submitting}
-                submitError={submitError}
-                editing={editing}
-                postsToJira={postsToJira}
-                onApprove={() => decide(hasEdits ? 'edited' : 'approved')}
-                onEdit={() => setEditing(true)}
-                onReject={() => decide('rejected')}
-              />
-            )}
-
-            {isHistorical && (
-              <HistoricalFooter session={session} onRedo={redo} />
-            )}
-
             {status === 'skipped' && (
-              <div className="border border-panel-border bg-slate-50/60 rounded-lg px-4 py-3 text-sm text-slate-700">
+              <div className="border border-line bg-hover/60 rounded-lg px-4 py-3 text-sm text-ink-body">
                 Auto-close path — classifier marked this as{' '}
                 <code className="text-xs">{session.classification?.label}</code>.
-                No reply was generated.
+                No reply was generated.{' '}
                 <button
                   type="button"
                   onClick={redo}
-                  className="ml-3 text-xs text-blue-600 hover:text-blue-700"
+                  className="text-[12px] text-accent-fg hover:underline font-medium"
                 >
                   Re-process this ticket
-                </button>
-              </div>
-            )}
-
-            {status === 'auto_drafted' && (
-              <div className="border border-indigo-200 bg-indigo-50/60 rounded-lg px-4 py-3 text-sm text-indigo-800">
-                Agent recommends sending this draft as-is. You can still review
-                and approve / edit / reject below.
-                <DecisionRow
-                  hasEdits={hasEdits}
-                  submitting={submitting}
-                  submitError={submitError}
-                  editing={editing}
-                  onApprove={() => decide(hasEdits ? 'edited' : 'approved')}
-                  onEdit={() => setEditing(true)}
-                  onReject={() => decide('rejected')}
-                />
-              </div>
-            )}
-
-            {status === 'auto_resolved' && (
-              <div className="border border-emerald-200 bg-emerald-50/60 rounded-lg px-4 py-3 text-sm text-emerald-800">
-                Agent auto-resolved this ticket — no reply needed. Click below
-                to re-process if you disagree.
-                <button
-                  type="button"
-                  onClick={redo}
-                  className="ml-3 text-xs text-blue-600 hover:text-blue-700"
-                >
-                  Re-process
                 </button>
               </div>
             )}
@@ -302,13 +276,13 @@ export function AgentTicketDetail({
         )}
 
         {!loading && !session && source === 'jira' && (
-          <div className="border border-panel-border bg-slate-50/60 rounded-lg px-4 py-6 text-sm text-slate-700 text-center space-y-3">
+          <div className="border border-line bg-app rounded-lg px-4 py-6 text-sm text-ink-body text-center space-y-3">
             <p>This Jira ticket hasn't been processed by the agent yet.</p>
             <button
               type="button"
               onClick={processNow}
               disabled={processing}
-              className="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-60"
+              className="px-4 h-9 text-[13px] font-medium text-white bg-accent rounded-md hover:bg-accent-hover transition-colors duration-150 disabled:opacity-60"
             >
               {processing ? 'Classifying → retrieving → drafting…' : 'Process with agent'}
             </button>
@@ -319,9 +293,8 @@ export function AgentTicketDetail({
         )}
 
         {!loading && !session && source === 'local' && (
-          <div className="border border-panel-border bg-slate-50/60 rounded-lg px-4 py-6 text-sm text-slate-500 text-center">
-            Agent hasn't reached this ticket yet — wait for the batch to
-            finish.
+          <div className="border border-line bg-app rounded-lg px-4 py-6 text-sm text-ink-muted text-center">
+            Agent hasn't reached this ticket yet — wait for the batch to finish.
           </div>
         )}
       </div>
@@ -331,7 +304,7 @@ export function AgentTicketDetail({
 
 
 // ---------------------------------------------------------------------------
-// Pieces
+// Header
 // ---------------------------------------------------------------------------
 
 function TicketHeader({
@@ -344,32 +317,41 @@ function TicketHeader({
   processedMode: 'shadow' | 'assisted' | 'autonomous' | null;
 }) {
   return (
-    <section className="bg-panel-surface border border-panel-border rounded-lg p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <div className="text-[11px] font-mono text-slate-500">{ticket.key}</div>
-          <h2 className="mt-0.5 text-lg font-semibold tracking-tight text-slate-900 leading-snug">
-            {ticket.summary}
-          </h2>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {processedMode && <AgentModeChip mode={processedMode} size="sm" />}
-          <AgentStatusPill status={status} size="md" />
-        </div>
+    <section className="border-b border-line-subtle pb-5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-mono text-ink-muted tabular-nums">{ticket.key}</span>
+        <AgentStatusPill status={status} size="md" />
+        {processedMode && <AgentModeChip mode={processedMode} size="sm" />}
+      </div>
+      <h2 className="mt-1 text-lg font-semibold text-ink tracking-tight leading-snug">
+        {ticket.summary}
+      </h2>
+      <div className="mt-0.5 text-[13px] text-ink-body">
+        {ticket.reporter_email ?? 'unknown'} · {ticket.priority ?? '—'}
       </div>
       {ticket.labels.length > 0 && (
-        <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
           {ticket.labels.map((l) => (
-            <Chip key={l}>{l}</Chip>
+            <span
+              key={l}
+              className="inline-flex items-center text-xs font-mono text-ink-muted bg-app border border-line rounded px-1.5 py-0.5"
+            >
+              {l}
+            </span>
           ))}
         </div>
       )}
-      <div className="mt-3 text-[11px] text-slate-500">
-        {ticket.reporter_email ?? 'unknown'} · {ticket.priority ?? '—'}
-      </div>
-      <div className="mt-4 text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
-        {ticket.description || (
-          <span className="text-slate-400 italic">No description.</span>
+    </section>
+  );
+}
+
+
+function OriginalMessage({ description }: { description: string }) {
+  return (
+    <section>
+      <div className="bg-app border border-line rounded-lg p-5 text-[13px] text-ink whitespace-pre-line leading-relaxed">
+        {description.trim() || (
+          <span className="text-ink-muted italic">No description.</span>
         )}
       </div>
     </section>
@@ -377,21 +359,26 @@ function TicketHeader({
 }
 
 
+// ---------------------------------------------------------------------------
+// Timeline
+// ---------------------------------------------------------------------------
+
+type TimelineStep = {
+  at: string | null;
+  label: string;
+  detail?: string;
+  state: 'done' | 'pending' | 'rejected';
+};
+
+
 function Timeline({ session }: { session: AgentSessionDetail }) {
-  const steps: Array<{
-    at: string | null;
-    label: string;
-    detail?: string;
-    icon: 'done' | 'pending';
-  }> = [];
+  const steps: TimelineStep[] = [];
   if (session.classified_at && session.classification) {
     steps.push({
       at: session.classified_at,
       label: 'Classified',
-      detail: `${session.classification.label} (${session.classification.confidence.toFixed(
-        2,
-      )})`,
-      icon: 'done',
+      detail: `${session.classification.label} (${session.classification.confidence.toFixed(2)})`,
+      state: 'done',
     });
   }
   if (session.retrieved_at && session.retrieval) {
@@ -402,9 +389,9 @@ function Timeline({ session }: { session: AgentSessionDetail }) {
       detail: top
         ? `${session.retrieval.hits.length} match${
             session.retrieval.hits.length === 1 ? '' : 'es'
-          }, top: ${top.title.slice(0, 50)}${top.title.length > 50 ? '…' : ''}`
+          }, top: ${top.title.slice(0, 60)}${top.title.length > 60 ? '…' : ''}`
         : 'no matches',
-      icon: 'done',
+      state: 'done',
     });
   }
   if (session.drafted_at && session.draft) {
@@ -412,20 +399,20 @@ function Timeline({ session }: { session: AgentSessionDetail }) {
       at: session.drafted_at,
       label: 'Draft generated',
       detail: `recommended: ${session.draft.recommended_action.replace(/_/g, ' ')}`,
-      icon: 'done',
+      state: 'done',
     });
   }
   if (session.feedback_at && session.feedback_status) {
     steps.push({
       at: session.feedback_at,
       label: `Reviewer ${session.feedback_status}`,
-      icon: 'done',
+      state: session.feedback_status === 'rejected' ? 'rejected' : 'done',
     });
   } else if (session.draft && !session.feedback_status) {
     steps.push({
       at: null,
       label: 'Awaiting review',
-      icon: 'pending',
+      state: 'pending',
     });
   }
 
@@ -433,48 +420,66 @@ function Timeline({ session }: { session: AgentSessionDetail }) {
 
   return (
     <section>
-      <SectionHeading>Processing timeline</SectionHeading>
-      <ol className="space-y-2">
-        {steps.map((step, i) => (
-          <li key={i} className="flex items-start gap-3 text-sm">
-            <span className="text-[11px] font-mono text-slate-400 w-20 shrink-0 pt-0.5">
-              {step.at ? formatTime(step.at) : '—'}
-            </span>
-            <span
-              className={`inline-block w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                step.icon === 'done' ? 'bg-emerald-500' : 'bg-slate-300 animate-pulse'
-              }`}
-            />
-            <div>
-              <div className="font-medium text-slate-900">{step.label}</div>
-              {step.detail && (
-                <div className="text-[12px] text-slate-500">{step.detail}</div>
-              )}
-            </div>
-          </li>
-        ))}
+      <SectionLabel>Processing timeline</SectionLabel>
+      <ol>
+        {steps.map((step, i) => {
+          const isLast = i === steps.length - 1;
+          const dotClass =
+            step.state === 'done'
+              ? 'bg-emerald-500'
+              : step.state === 'rejected'
+              ? 'bg-red-500'
+              : 'bg-line';
+          return (
+            <li key={i} className="flex items-start gap-3">
+              <span className="text-[11px] font-mono text-ink-muted w-20 shrink-0 text-right pt-1">
+                {step.at ? formatTime(step.at) : '—'}
+              </span>
+              <span className="flex flex-col items-center self-stretch">
+                <span
+                  className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${dotClass}`}
+                />
+                {!isLast && <span className="w-px flex-1 bg-line-subtle my-1" />}
+              </span>
+              <div className={isLast ? '' : 'pb-3'}>
+                <div className="text-[13px] font-medium text-ink leading-snug">
+                  {step.label}
+                </div>
+                {step.detail && (
+                  <div className="text-[12px] text-ink-body mt-0.5 leading-snug">
+                    {step.detail}
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
       </ol>
     </section>
   );
 }
 
 
+// ---------------------------------------------------------------------------
+// Classification
+// ---------------------------------------------------------------------------
+
 function ClassificationCard({ session }: { session: AgentSessionDetail }) {
   if (!session.classification) return null;
   return (
     <section>
-      <SectionHeading>Classification</SectionHeading>
-      <div className="bg-panel-surface border border-panel-border rounded-lg p-4">
-        <div className="flex items-center gap-3 text-sm">
-          <code className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-xs font-mono">
+      <SectionLabel>Classification</SectionLabel>
+      <div className="border border-line rounded-lg p-4">
+        <div className="flex items-center gap-2">
+          <code className="font-mono text-[11px] bg-app border border-line rounded px-1.5 py-0.5 text-ink-body">
             {session.classification.label}
           </code>
-          <span className="text-[11px] text-slate-500 font-mono">
+          <span className="text-[11px] text-ink-muted font-mono">
             conf {session.classification.confidence.toFixed(2)}
           </span>
         </div>
         {session.classification.reason && (
-          <p className="mt-2 text-sm text-slate-600 leading-relaxed">
+          <p className="mt-2 text-[13px] text-ink-body leading-relaxed">
             {session.classification.reason}
           </p>
         )}
@@ -483,6 +488,10 @@ function ClassificationCard({ session }: { session: AgentSessionDetail }) {
   );
 }
 
+
+// ---------------------------------------------------------------------------
+// Matched playbook
+// ---------------------------------------------------------------------------
 
 function PlaybookCard({
   playbookId,
@@ -495,46 +504,57 @@ function PlaybookCard({
   description: string;
   score: number | null;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const longDescription = description.length > 220;
   return (
     <section>
-      <SectionHeading>Matched playbook</SectionHeading>
-      <Link
-        to={`/knowledge/${playbookId}`}
-        className="block bg-panel-surface border border-panel-border rounded-lg p-4 hover:border-blue-300 transition-colors"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1">
-            <div className="text-sm font-medium text-slate-900 leading-snug">
-              {title}
-            </div>
-            <div className="mt-0.5 text-[11px] font-mono text-slate-500">
-              {playbookId}
-            </div>
-          </div>
+      <SectionLabel>Matched playbook</SectionLabel>
+      <div className="border border-line rounded-lg p-4">
+        <div className="flex items-start justify-between gap-4">
+          <Link
+            to={`/knowledge/${playbookId}`}
+            className="text-[13px] font-semibold text-ink leading-snug hover:text-accent-fg transition-colors duration-150"
+          >
+            {title}
+          </Link>
           {score != null && (
-            <span className="text-[11px] font-mono text-slate-500">
+            <span className="text-[11px] font-mono text-ink-muted shrink-0">
               score {score.toFixed(2)}
             </span>
           )}
         </div>
-        <p className="mt-2 text-[13px] text-slate-600 leading-relaxed line-clamp-3">
-          {description}
-        </p>
-      </Link>
+        <div className="mt-0.5 text-[11px] font-mono text-ink-muted">{playbookId}</div>
+        {description && (
+          <>
+            <p
+              className={`mt-2 text-[13px] text-ink-body leading-relaxed ${
+                longDescription && !expanded ? 'line-clamp-3' : ''
+              }`}
+            >
+              {description}
+            </p>
+            {longDescription && (
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                className="mt-1 text-[12px] text-accent-fg hover:underline"
+              >
+                {expanded ? 'Show less' : 'Show more'}
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </section>
   );
 }
 
 
-function DraftPanel({
-  session,
-  editing,
-  editedText,
-  onEditedTextChange,
-  onStartEdit,
-  onCancelEdit,
-  hasEdits,
-}: {
+// ---------------------------------------------------------------------------
+// Draft + decision
+// ---------------------------------------------------------------------------
+
+interface DraftSectionProps {
   session: AgentSessionDetail;
   editing: boolean;
   editedText: string;
@@ -542,31 +562,64 @@ function DraftPanel({
   onStartEdit: () => void;
   onCancelEdit: () => void;
   hasEdits: boolean;
-}) {
+  postsToJira: boolean;
+  isActionable: boolean;
+  isHistorical: boolean;
+  isAutoPosted: boolean;
+  submitting: boolean;
+  submitError: string | null;
+  onApprove: () => void;
+  onReject: () => void;
+  onRedo: () => void;
+  jiraUrl: string | null;
+  ticketKey: string;
+}
+
+
+function DraftSection({
+  session,
+  editing,
+  editedText,
+  onEditedTextChange,
+  onStartEdit,
+  onCancelEdit,
+  hasEdits,
+  postsToJira,
+  isActionable,
+  isHistorical,
+  isAutoPosted,
+  submitting,
+  submitError,
+  onApprove,
+  onReject,
+  onRedo,
+  jiraUrl,
+  ticketKey,
+}: DraftSectionProps) {
   if (!session.draft) return null;
-  const action = session.draft.recommended_action;
+  const action = session.draft.recommended_action.replace(/_/g, ' ');
   return (
     <section>
-      <div className="flex items-center justify-between mb-2">
-        <SectionHeading>Draft reply</SectionHeading>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-mono text-slate-500">
-            action: {action.replace(/_/g, ' ')}
-          </span>
-          {!editing && (
+      <div className="flex items-center justify-between mb-3">
+        <SectionLabel>Draft reply</SectionLabel>
+        <div className="flex items-center gap-3 mb-3">
+          <span className="text-[11px] font-mono text-ink-muted">action: {action}</span>
+          {!editing && !isAutoPosted && !isHistorical && (
             <button
               type="button"
               onClick={onStartEdit}
-              className="text-[11px] text-blue-600 hover:text-blue-700"
+              className="text-[12px] text-accent-fg hover:underline font-medium"
             >
               Edit
             </button>
           )}
         </div>
       </div>
-      <div className="bg-panel-surface border border-panel-border rounded-lg p-4">
+
+      {/* Draft body card — slightly more padding than other cards. */}
+      <div className="border border-line rounded-lg p-5">
         {!editing ? (
-          <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-sans">
+          <div className="text-[13px] text-ink whitespace-pre-line leading-relaxed">
             {editedText}
           </div>
         ) : (
@@ -575,23 +628,23 @@ function DraftPanel({
               value={editedText}
               onChange={(e) => onEditedTextChange(e.target.value)}
               rows={Math.max(8, Math.min(20, editedText.split('\n').length + 1))}
-              className="w-full px-3 py-2 text-sm border-2 border-blue-400 rounded font-sans focus:outline-none focus:ring-2 focus:ring-blue-500/15 resize-y leading-relaxed"
+              className="w-full px-3 py-2 text-[13px] bg-card border border-accent rounded-md font-sans focus:outline-none focus:ring-2 focus:ring-accent/20 resize-y leading-relaxed"
             />
             <div className="mt-2 flex items-center justify-between">
-              {hasEdits && (
-                <details className="text-[11px] text-slate-500">
-                  <summary className="cursor-pointer hover:text-slate-700">
-                    Show diff
-                  </summary>
-                  <div className="mt-2 p-2 bg-slate-50 border border-panel-divider rounded">
+              {hasEdits ? (
+                <details className="text-[11px] text-ink-muted">
+                  <summary className="cursor-pointer hover:text-ink-body">Show diff</summary>
+                  <div className="mt-2 p-2 bg-app border border-line-subtle rounded-md">
                     <DiffView original={session.draft.draft} edited={editedText} />
                   </div>
                 </details>
+              ) : (
+                <span />
               )}
               <button
                 type="button"
                 onClick={onCancelEdit}
-                className="ml-auto px-2.5 py-1 text-xs text-slate-600 rounded hover:bg-slate-100"
+                className="text-[12px] text-ink-body rounded-md px-2.5 h-7 hover:bg-hover"
               >
                 Cancel edits
               </button>
@@ -599,10 +652,42 @@ function DraftPanel({
           </>
         )}
       </div>
+
+      {/* Playbook caveat — quiet contextual info, NOT a warning. */}
       {session.draft.rationale && (
-        <p className="mt-2 text-[11px] text-slate-500 italic">
+        <p className="text-[12px] text-ink-muted italic leading-relaxed mt-3 px-1">
           {session.draft.rationale}
         </p>
+      )}
+
+      {/* Decision UX — exactly one of: action row, banner, or auto-resolved. */}
+      {isAutoPosted && (
+        <AutoResolvedBanner
+          postedAt={session.auto_posted_at!}
+          jiraUrl={jiraUrl}
+          ticketKey={ticketKey}
+        />
+      )}
+
+      {isActionable && (
+        <DecisionRow
+          hasEdits={hasEdits}
+          submitting={submitting}
+          submitError={submitError}
+          postsToJira={postsToJira}
+          onApprove={onApprove}
+          onEdit={onStartEdit}
+          onReject={onReject}
+          editing={editing}
+        />
+      )}
+
+      {isHistorical && (
+        <DecisionBanner
+          status={session.feedback_status as 'approved' | 'edited' | 'rejected'}
+          feedbackAt={session.feedback_at}
+          onRedo={onRedo}
+        />
       )}
     </section>
   );
@@ -613,8 +698,8 @@ function DecisionRow({
   hasEdits,
   submitting,
   submitError,
-  editing,
   postsToJira,
+  editing,
   onApprove,
   onEdit,
   onReject,
@@ -622,14 +707,12 @@ function DecisionRow({
   hasEdits: boolean;
   submitting: boolean;
   submitError: string | null;
-  editing: boolean;
   postsToJira: boolean;
+  editing: boolean;
   onApprove: () => void;
   onEdit: () => void;
   onReject: () => void;
 }) {
-  // Approve button copy mirrors what it actually does. If no outbound
-  // write (shadow mode or local ticket), 'send' is misleading — drop it.
   const approveLabel = postsToJira
     ? hasEdits
       ? 'Approve & send edited'
@@ -638,13 +721,13 @@ function DecisionRow({
     ? 'Approve & save edit'
     : 'Approve';
   return (
-    <div className="pt-2">
-      <div className="flex items-center justify-end gap-2">
+    <div className="mt-4">
+      <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={onReject}
           disabled={submitting}
-          className="px-3 py-1.5 text-sm border border-red-200 text-red-700 bg-white rounded hover:bg-red-50 disabled:opacity-60"
+          className="mr-auto inline-flex items-center px-4 h-9 text-[13px] font-medium bg-transparent border border-red-200 text-red-600 rounded-md hover:bg-red-50 transition-colors duration-150 disabled:opacity-60"
         >
           Reject
         </button>
@@ -653,7 +736,7 @@ function DecisionRow({
             type="button"
             onClick={onEdit}
             disabled={submitting}
-            className="px-3 py-1.5 text-sm border border-blue-200 text-blue-700 bg-white rounded hover:bg-blue-50 disabled:opacity-60"
+            className="inline-flex items-center px-4 h-9 text-[13px] font-medium bg-app border border-line text-ink rounded-md hover:bg-hover transition-colors duration-150 disabled:opacity-60"
           >
             Edit
           </button>
@@ -662,7 +745,7 @@ function DecisionRow({
           type="button"
           onClick={onApprove}
           disabled={submitting}
-          className="px-4 py-1.5 text-sm font-medium text-white bg-emerald-600 rounded hover:bg-emerald-700 disabled:opacity-60"
+          className="inline-flex items-center px-4 h-9 text-[13px] font-medium text-white bg-accent rounded-md hover:bg-accent-hover transition-colors duration-150 disabled:opacity-60"
         >
           {approveLabel}
         </button>
@@ -675,48 +758,105 @@ function DecisionRow({
 }
 
 
-function HistoricalFooter({
-  session,
+function DecisionBanner({
+  status,
+  feedbackAt,
   onRedo,
 }: {
-  session: AgentSessionDetail;
+  status: 'approved' | 'edited' | 'rejected';
+  feedbackAt: string | null;
   onRedo: () => void;
 }) {
-  const status = session.feedback_status;
-  const tone =
-    status === 'rejected'
-      ? 'bg-red-50 border-red-200 text-red-800'
-      : status === 'edited'
-      ? 'bg-indigo-50 border-indigo-200 text-indigo-800'
-      : 'bg-emerald-50 border-emerald-200 text-emerald-800';
+  const isRejected = status === 'rejected';
+  const tone = isRejected
+    ? 'bg-red-50 border-red-200'
+    : 'bg-emerald-50 border-emerald-200';
+  const textTone = isRejected ? 'text-red-700' : 'text-emerald-700';
+  const subTone = isRejected ? 'text-red-400' : 'text-emerald-500';
   return (
-    <div className={`border rounded-lg px-4 py-3 text-sm ${tone}`}>
-      <div className="flex items-center justify-between gap-3">
-        <span>
-          Decision: <strong>{status}</strong>
-          {session.feedback_at && (
-            <span className="ml-2 text-[11px] font-mono opacity-70">
-              at {formatTime(session.feedback_at)}
-            </span>
-          )}
+    <div className={`flex items-center justify-between border rounded-lg px-4 py-3 mt-4 ${tone}`}>
+      <span className="text-[13px]">
+        <span className={`font-medium ${textTone}`}>
+          Decision: {status === 'edited' ? 'approved (edited)' : status}
         </span>
-        <button
-          type="button"
-          onClick={onRedo}
-          className="text-xs text-blue-600 hover:text-blue-700"
-        >
-          Re-process this ticket
-        </button>
-      </div>
+        {feedbackAt && (
+          <span className={`ml-2 text-[12px] font-mono ${subTone}`}>
+            at {formatTime(feedbackAt)}
+          </span>
+        )}
+      </span>
+      <button
+        type="button"
+        onClick={onRedo}
+        className="text-[12px] text-accent-fg hover:underline font-medium"
+      >
+        Re-process this ticket
+      </button>
     </div>
   );
 }
 
 
+function AutoResolvedBanner({
+  postedAt,
+  jiraUrl,
+  ticketKey,
+}: {
+  postedAt: string;
+  jiraUrl: string | null;
+  ticketKey: string;
+}) {
+  return (
+    <div className="flex items-center justify-between border border-emerald-200 bg-emerald-50 rounded-lg px-4 py-3 mt-4">
+      <div className="flex items-center gap-2 text-[13px] text-emerald-700">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="text-emerald-600 shrink-0"
+        >
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+        <span>
+          <span className="font-medium">Auto-resolved</span> — posted to Jira at{' '}
+          <span className="font-mono text-[12px]">{formatTimestampFull(postedAt)}</span>
+        </span>
+      </div>
+      {jiraUrl ? (
+        <a
+          href={jiraUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[12px] text-emerald-700 hover:underline font-medium inline-flex items-center gap-1"
+        >
+          Open {ticketKey}
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+        </a>
+      ) : (
+        <span className="text-[11px] font-mono text-emerald-600">{ticketKey}</span>
+      )}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Date helpers
+// ---------------------------------------------------------------------------
+
 function formatTime(iso: string): string {
   try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString(undefined, {
+    return new Date(iso).toLocaleTimeString(undefined, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
@@ -739,57 +879,4 @@ function formatTimestampFull(iso: string): string {
   } catch {
     return iso;
   }
-}
-
-
-function AutoResolvedBanner({
-  postedAt,
-  jiraUrl,
-  ticketKey,
-}: {
-  postedAt: string;
-  jiraUrl: string | null;
-  ticketKey: string;
-}) {
-  return (
-    <div className="border border-emerald-300 bg-emerald-50 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
-      <div className="flex items-center gap-2 text-sm text-emerald-800">
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="text-emerald-600 shrink-0"
-        >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-        <span>
-          <strong className="font-medium">Auto-resolved</strong> — comment posted to Jira at{' '}
-          <span className="font-mono text-[12px]">{formatTimestampFull(postedAt)}</span>
-        </span>
-      </div>
-      {jiraUrl ? (
-        <a
-          href={jiraUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs font-medium text-emerald-700 hover:text-emerald-900 inline-flex items-center gap-1"
-        >
-          Open {ticketKey}
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-            <polyline points="15 3 21 3 21 9" />
-            <line x1="10" y1="14" x2="21" y2="3" />
-          </svg>
-        </a>
-      ) : (
-        <span className="text-[11px] font-mono text-emerald-700">{ticketKey}</span>
-      )}
-    </div>
-  );
 }

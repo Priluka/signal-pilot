@@ -129,10 +129,10 @@ export function GraphPage() {
     <div className="h-full flex flex-col">
       <header className="px-6 py-4 border-b border-panel-border bg-panel-surface flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight text-slate-900">
+          <h1 className="text-lg font-semibold tracking-tight text-ink">
             Knowledge Graph
           </h1>
-          <p className="text-[11px] text-slate-500 mt-0.5">
+          <p className="text-[11px] text-ink-muted mt-0.5">
             {graph
               ? `${filteredGraph?.nodes.length ?? graph.nodes.length} playbooks · ${
                   filteredGraph?.links.length ?? graph.links.length
@@ -142,9 +142,9 @@ export function GraphPage() {
         </div>
         <Legend onFilter={setClassFilter} active={classFilter} />
       </header>
-      <div ref={containerRef} className="relative flex-1 overflow-hidden bg-slate-50">
+      <div ref={containerRef} className="relative flex-1 overflow-hidden bg-hover">
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-400">
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-ink-muted">
             Loading graph…
           </div>
         )}
@@ -201,10 +201,10 @@ function Legend({
           onClick={() => onFilter(active === cls ? null : cls)}
           className={`inline-flex items-center gap-1.5 px-2 py-1 text-[11px] border rounded transition-colors ${
             active === cls
-              ? 'bg-slate-100 border-slate-400 text-slate-900'
+              ? 'bg-hover border-line text-ink'
               : active === null
-              ? 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-              : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-50'
+              ? 'bg-card border-line text-ink-body hover:bg-hover'
+              : 'bg-card border-line text-ink-muted hover:bg-hover'
           }`}
         >
           <span
@@ -218,7 +218,7 @@ function Legend({
         <button
           type="button"
           onClick={() => onFilter(null)}
-          className="text-[11px] text-blue-600 hover:text-blue-700"
+          className="text-[11px] text-accent hover:text-accent"
         >
           Clear
         </button>
@@ -230,14 +230,14 @@ function Legend({
 
 function NodeTooltip({ node }: { node: RenderNode }) {
   return (
-    <div className="absolute pointer-events-none top-4 left-4 max-w-sm bg-white border border-panel-border rounded-lg shadow-sm p-3">
-      <div className="text-sm font-medium text-slate-900 leading-snug">
+    <div className="absolute pointer-events-none top-4 left-4 max-w-sm bg-card border border-panel-border rounded-md shadow-sm p-3">
+      <div className="text-sm font-medium text-ink leading-snug">
         {node.title}
       </div>
-      <div className="mt-1 text-[11px] font-mono text-slate-500">{node.id}</div>
+      <div className="mt-1 text-[11px] font-mono text-ink-muted">{node.id}</div>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
         <span
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 border rounded bg-slate-50 text-slate-700"
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 border rounded bg-hover text-ink-body"
           style={{ borderColor: colorFor(node.ticket_class) }}
         >
           <span
@@ -246,31 +246,31 @@ function NodeTooltip({ node }: { node: RenderNode }) {
           />
           {node.ticket_class}
         </span>
-        <span className="text-slate-500">{node.issue_category}</span>
+        <span className="text-ink-muted">{node.issue_category}</span>
       </div>
       <div className="mt-2 grid grid-cols-3 gap-3 text-[11px]">
         <div>
-          <div className="uppercase tracking-wider text-slate-400 font-semibold text-[10px]">
+          <div className="uppercase tracking-wider text-ink-muted font-semibold text-[10px]">
             Cluster
           </div>
-          <div className="text-slate-700 font-mono">{node.cluster_size ?? '—'}</div>
+          <div className="text-ink-body font-mono">{node.cluster_size ?? '—'}</div>
         </div>
         <div>
-          <div className="uppercase tracking-wider text-slate-400 font-semibold text-[10px]">
+          <div className="uppercase tracking-wider text-ink-muted font-semibold text-[10px]">
             Conf
           </div>
-          <div className="text-slate-700 font-mono">
+          <div className="text-ink-body font-mono">
             {node.extraction_confidence?.toFixed(2) ?? '—'}
           </div>
         </div>
         <div>
-          <div className="uppercase tracking-wider text-slate-400 font-semibold text-[10px]">
+          <div className="uppercase tracking-wider text-ink-muted font-semibold text-[10px]">
             Links
           </div>
-          <div className="text-slate-700 font-mono">{node.degree}</div>
+          <div className="text-ink-body font-mono">{node.degree}</div>
         </div>
       </div>
-      <div className="mt-2 text-[10px] text-slate-400">Click to open playbook</div>
+      <div className="mt-2 text-[10px] text-ink-muted">Click to open playbook</div>
     </div>
   );
 }

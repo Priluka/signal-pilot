@@ -55,7 +55,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         {toasts.map((t) => (
           <div
             key={t.id}
-            className={`pointer-events-auto px-3 py-2 text-sm rounded-lg border shadow-sm bg-white max-w-sm ${
+            className={`pointer-events-auto px-3 py-2 text-sm rounded-md border shadow-sm bg-card max-w-sm ${
               t.tone === 'success'
                 ? 'border-emerald-200 text-emerald-800'
                 : 'border-red-200 text-red-800'

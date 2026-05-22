@@ -1,38 +1,23 @@
-/** Activity Log — complete audit trail of every agent step + operator
- * decision. Tickets are listed as collapsible cards (newest activity first);
- * the embedded timeline reveals every classify / retrieve / draft / decide
- * event in chronological order. Clicking a card opens the full detail panel
- * on the right (read-mostly; AgentTicketDetail hides the decision buttons
- * once a ticket is decided).
+/** Activity Log — Linear-style issues list.
+ *
+ * Full-width, flat, compact. The page is a single audit stream grouped
+ * by ticket (or by playbook for suggestion events, or by 'config' for
+ * global config changes). Each group is a single row that expands in
+ * place to show its event timeline. No cards, no right-side detail
+ * pane — the row IS the detail.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import { Activity, ChevronRight, Settings } from 'lucide-react';
 
-import { AgentMetricsBar } from '../components/AgentMetricsBar';
-import { AgentStatusPill } from '../components/AgentStatusPill';
-import { AgentTicketDetail } from '../components/AgentTicketDetail';
-import {
-  getAgentBatchStatus,
-  getAgentMetrics,
-  getJiraTicket,
-  getTicket,
-  listAgentActivity,
-  listAgentSessions,
-} from '../lib/api';
+import { listAgentActivity, listAgentSessions } from '../lib/api';
 import type {
   AgentActivityEvent,
   AgentEventType,
-  AgentMetrics,
   AgentSessionSummary,
-  AgentStatus,
-  BatchStatus,
-  TicketDetail,
 } from '../lib/types';
 
 
-// 'suggestions' is a meta-filter that matches any of the three
-// suggestion_* event types — the operator usually wants to see them
-// together, not one type at a time.
 type TypeFilter = AgentEventType | 'all' | 'suggestions';
 
 
@@ -61,272 +46,37 @@ function isSuggestionEvent(eventType: AgentEventType): boolean {
 }
 
 
-interface TicketGroup {
-  ticket_id: string;
-  events: AgentActivityEvent[];
-  latest_at: string;
-  session: AgentSessionSummary | undefined;
-}
+// ---------------------------------------------------------------------------
+// Color mapping
+// ---------------------------------------------------------------------------
 
-
-export function ActivityLogPage() {
-  const { ticketKey } = useParams();
-  const navigate = useNavigate();
-
-  const [events, setEvents] = useState<AgentActivityEvent[]>([]);
-  const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
-  const [metrics, setMetrics] = useState<AgentMetrics | null>(null);
-  const [batch, setBatch] = useState<BatchStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  const [activeTicket, setActiveTicket] = useState<TicketDetail | null>(null);
-  const [activeSource, setActiveSource] = useState<'local' | 'jira'>('local');
-  const [activeLoading, setActiveLoading] = useState(false);
-
-  const refresh = useCallback(async () => {
-    try {
-      const [a, s, m] = await Promise.all([
-        listAgentActivity(),
-        listAgentSessions(),
-        getAgentMetrics(),
-      ]);
-      setEvents(a);
-      setSessions(s);
-      setMetrics(m);
-    } catch {
-      // Swallow — periodic poll retries; we never want a transient error
-      // to trap the page in loading state.
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-
-    // Read-only: we never start a batch from the Activity Log — only the
-    // Inbox triggers processing. Here we just show what's already happened.
-    getAgentBatchStatus()
-      .then((b) => {
-        if (cancelled) return;
-        setBatch(b);
-        if (b.running) {
-          intervalId = setInterval(async () => {
-            try {
-              const s = await getAgentBatchStatus();
-              if (cancelled) return;
-              setBatch(s);
-              refresh();
-              if (!s.running && intervalId) {
-                clearInterval(intervalId);
-                intervalId = null;
-              }
-            } catch {
-              /* transient */
-            }
-          }, 2000);
-        }
-      })
-      .catch(() => {});
-
-    refresh();
-    const handler = () => refresh();
-    window.addEventListener('agent-sessions-changed', handler);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('agent-sessions-changed', handler);
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [refresh]);
-
-  // Activity Log groups both local-sample tickets AND Jira tickets that
-  // came through /jira/process/{key}. Local /tickets/{key} returns 404 for
-  // Jira keys, so we try local first and fall back to /jira/tickets/{key}
-  // — that way the right pane works for both without the operator having
-  // to specify which source the row belongs to.
-  useEffect(() => {
-    if (!ticketKey) {
-      setActiveTicket(null);
-      return;
-    }
-    let cancelled = false;
-    setActiveLoading(true);
-    setActiveTicket(null);
-    (async () => {
-      try {
-        const local = await getTicket(ticketKey);
-        if (!cancelled) {
-          setActiveTicket(local);
-          setActiveSource('local');
-        }
-      } catch {
-        try {
-          const jira = await getJiraTicket(ticketKey);
-          if (!cancelled) {
-            setActiveTicket(jira);
-            setActiveSource('jira');
-          }
-        } catch {
-          if (!cancelled) setActiveTicket(null);
-        }
-      } finally {
-        if (!cancelled) setActiveLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [ticketKey]);
-
-  const sessionByTicketId = useMemo(() => {
-    const m = new Map<string, AgentSessionSummary>();
-    for (const s of sessions) m.set(s.ticket_id, s);
-    return m;
-  }, [sessions]);
-
-  // Group events by ticket; sort events within each group ascending so the
-  // timeline reads top→bottom (oldest→newest), then sort groups by latest
-  // event timestamp descending.
-  const groups: TicketGroup[] = useMemo(() => {
-    const map = new Map<string, AgentActivityEvent[]>();
-    for (const e of events) {
-      const arr = map.get(e.ticket_id) ?? [];
-      arr.push(e);
-      map.set(e.ticket_id, arr);
-    }
-    const out: TicketGroup[] = [];
-    for (const [ticket_id, list] of map) {
-      list.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      const latest_at = list.length ? list[list.length - 1].timestamp : '';
-      out.push({
-        ticket_id,
-        events: list,
-        latest_at,
-        session: sessionByTicketId.get(ticket_id),
-      });
-    }
-    out.sort((a, b) => b.latest_at.localeCompare(a.latest_at));
-    return out;
-  }, [events, sessionByTicketId]);
-
-  const filteredGroups = useMemo(() => {
-    let rows = groups;
-    if (typeFilter !== 'all') {
-      rows = rows.filter((g) =>
-        g.events.some((e) => matchesFilter(e.event_type, typeFilter)),
-      );
-    }
-    if (search.trim()) {
-      const needle = search.toLowerCase();
-      rows = rows.filter(
-        (g) =>
-          g.ticket_id.toLowerCase().includes(needle) ||
-          g.events.some((e) => e.detail.toLowerCase().includes(needle)),
-      );
-    }
-    return rows;
-  }, [groups, search, typeFilter]);
-
-  function toggleExpanded(ticketId: string) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(ticketId)) next.delete(ticketId);
-      else next.add(ticketId);
-      return next;
-    });
+// Row-level status dot (collapsed row). Reads the group's session state
+// rather than any specific event so the dot reflects "where does this
+// ticket stand right now", not "what was the last thing logged".
+function rowStatusDot(group: TicketGroup): string {
+  const status = group.session?.derived_status;
+  switch (status) {
+    case 'escalated':
+    case 'rejected':
+      return 'bg-red-500';
+    case 'needs_review':
+      return 'bg-amber-500';
+    case 'approved':
+    case 'auto_resolved':
+      return 'bg-emerald-500';
+    case 'auto_drafted':
+      return 'bg-blue-500';
+    case 'skipped':
+      return 'bg-gray-400';
+    case 'in_progress':
+      return 'bg-indigo-500';
+    default:
+      return 'bg-gray-300';
   }
-
-  return (
-    <div className="h-full flex flex-col">
-      <header className="px-6 py-3 border-b border-panel-border bg-panel-surface space-y-3">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold tracking-tight text-slate-900">
-            Activity Log
-          </h1>
-          <span className="text-[11px] text-slate-500 font-mono">
-            {filteredGroups.length} ticket{filteredGroups.length === 1 ? '' : 's'} ·{' '}
-            {events.length} events
-          </span>
-        </div>
-        <AgentMetricsBar metrics={metrics} batch={batch} />
-        <div className="flex items-center gap-3 flex-wrap">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search ticket id or event text…"
-            className="w-72 px-3 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
-          />
-          <div className="flex items-center gap-1 flex-wrap">
-            {TYPE_FILTERS.map((f) => (
-              <button
-                key={f.key}
-                type="button"
-                onClick={() => setTypeFilter(f.key)}
-                className={`px-2 py-0.5 text-[11px] border rounded transition-colors ${
-                  typeFilter === f.key
-                    ? 'bg-slate-100 border-slate-400 text-slate-900'
-                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </header>
-      <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 overflow-y-auto scrollbar-thin">
-          <div className="max-w-4xl mx-auto px-6 py-4 space-y-2">
-            {loading && (
-              <div className="text-sm text-slate-400">Loading activity…</div>
-            )}
-            {!loading && filteredGroups.length === 0 && (
-              <div className="text-sm text-slate-400">No matching activity yet.</div>
-            )}
-            {filteredGroups.map((g) => (
-              <TicketActivityCard
-                key={g.ticket_id}
-                group={g}
-                expanded={expanded.has(g.ticket_id)}
-                onToggle={() => toggleExpanded(g.ticket_id)}
-                onOpen={() => navigate(`/activity-log/${g.ticket_id}`)}
-                isActive={ticketKey === g.ticket_id}
-              />
-            ))}
-          </div>
-        </div>
-        {ticketKey && (
-          <div className="w-[440px] shrink-0 border-l border-panel-border overflow-y-auto scrollbar-thin">
-            {activeLoading ? (
-              <div className="flex items-center justify-center h-full text-sm text-slate-400">
-                Loading ticket…
-              </div>
-            ) : activeTicket ? (
-              <AgentTicketDetail ticket={activeTicket} source={activeSource} />
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full px-6 text-sm text-slate-500 text-center gap-2">
-                <span className="font-mono text-[12px] text-slate-400">{ticketKey}</span>
-                <p>Ticket not found in the local sample or your Jira project.</p>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
 }
 
 
-// ---------------------------------------------------------------------------
-// Collapsible per-ticket card with embedded timeline
-// ---------------------------------------------------------------------------
-
+// Event-level dot (expanded sub-rows). One per AgentEventType.
 const EVENT_DOT: Record<AgentEventType, string> = {
   classified: 'bg-blue-500',
   retrieved: 'bg-indigo-500',
@@ -334,42 +84,20 @@ const EVENT_DOT: Record<AgentEventType, string> = {
   approved: 'bg-emerald-500',
   edited: 'bg-indigo-500',
   rejected: 'bg-red-500',
-  skipped: 'bg-slate-400',
-  // Suggestions get their own purple so the operator can pick them out at
-  // a glance from the agent-step events above.
+  skipped: 'bg-gray-400',
+  // Suggestions and config use icons, not dots — values here just keep
+  // the Record exhaustive.
   suggestion_created: 'bg-purple-500',
   suggestion_accepted: 'bg-purple-600',
   suggestion_rejected: 'bg-purple-400',
-  // Config changes wear a gear icon, not a dot — value here just for
-  // typing completeness.
-  config_change: 'bg-slate-500',
+  config_change: 'bg-gray-400',
 };
-
-
-function GearIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  );
-}
 
 
 function labelForEvent(eventType: AgentEventType): string {
   switch (eventType) {
     case 'edited':
-      return 'Approved (edited)';
+      return 'approved (edited)';
     case 'suggestion_created':
       return 'suggestion · created';
     case 'suggestion_accepted':
@@ -384,196 +112,358 @@ function labelForEvent(eventType: AgentEventType): string {
 }
 
 
-function PencilIcon({ className }: { className?: string }) {
+// ---------------------------------------------------------------------------
+// Grouping
+// ---------------------------------------------------------------------------
+
+interface TicketGroup {
+  ticket_id: string;
+  events: AgentActivityEvent[];
+  latest_at: string;
+  session: AgentSessionSummary | undefined;
+  /** True when all events in the group are suggestion lifecycle events —
+   * the row points at a playbook rather than a ticket. */
+  isPlaybookOnly: boolean;
+  /** True when ticket_id is the global config pseudo-id. */
+  isGlobalConfig: boolean;
+}
+
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
+export function ActivityLogPage() {
+  const [events, setEvents] = useState<AgentActivityEvent[]>([]);
+  const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const refresh = useCallback(async () => {
+    try {
+      const [a, s] = await Promise.all([listAgentActivity(), listAgentSessions()]);
+      setEvents(a);
+      setSessions(s);
+    } catch {
+      /* swallow — agent-sessions-changed will retrigger */
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const handler = () => refresh();
+    window.addEventListener('agent-sessions-changed', handler);
+    return () => window.removeEventListener('agent-sessions-changed', handler);
+  }, [refresh]);
+
+  const sessionByTicketId = useMemo(() => {
+    const m = new Map<string, AgentSessionSummary>();
+    for (const s of sessions) m.set(s.ticket_id, s);
+    return m;
+  }, [sessions]);
+
+  const groups: TicketGroup[] = useMemo(() => {
+    const map = new Map<string, AgentActivityEvent[]>();
+    for (const e of events) {
+      const arr = map.get(e.ticket_id) ?? [];
+      arr.push(e);
+      map.set(e.ticket_id, arr);
+    }
+    const out: TicketGroup[] = [];
+    for (const [ticket_id, list] of map) {
+      list.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      const latest_at = list.length ? list[list.length - 1].timestamp : '';
+      const isPlaybookOnly =
+        list.length > 0 &&
+        list.every(
+          (e) => isSuggestionEvent(e.event_type) || e.event_type === 'config_change',
+        );
+      out.push({
+        ticket_id,
+        events: list,
+        latest_at,
+        session: sessionByTicketId.get(ticket_id),
+        isPlaybookOnly,
+        isGlobalConfig: ticket_id === 'config',
+      });
+    }
+    out.sort((a, b) => b.latest_at.localeCompare(a.latest_at));
+    return out;
+  }, [events, sessionByTicketId]);
+
+  const filteredGroups = useMemo(() => {
+    if (typeFilter === 'all') return groups;
+    return groups.filter((g) =>
+      g.events.some((e) => matchesFilter(e.event_type, typeFilter)),
+    );
+  }, [groups, typeFilter]);
+
+  function toggleExpanded(ticketId: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(ticketId)) next.delete(ticketId);
+      else next.add(ticketId);
+      return next;
+    });
+  }
+
   return (
-    <svg
-      className={className}
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
-    </svg>
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <header className="h-12 px-4 flex items-center border-b border-line-subtle shrink-0">
+        <h1 className="text-base font-semibold text-ink tracking-tight">Activity Log</h1>
+      </header>
+
+      {/* Filter chips */}
+      <div className="px-4 py-2 border-b border-line-subtle flex items-center gap-1 overflow-x-auto scrollbar-thin">
+        {TYPE_FILTERS.map((f) => {
+          const active = typeFilter === f.key;
+          return (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setTypeFilter(f.key)}
+              className={`px-2.5 py-1 rounded-md text-[12px] font-medium whitespace-nowrap transition-colors duration-150 cursor-pointer ${
+                active
+                  ? 'bg-active text-ink'
+                  : 'text-ink-muted hover:text-ink-body hover:bg-hover'
+              }`}
+            >
+              {f.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Event list — flat, full width */}
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        {loading ? (
+          <div className="px-4 py-6 text-sm text-ink-muted">Loading activity…</div>
+        ) : filteredGroups.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <ul>
+            {filteredGroups.map((g) => (
+              <ActivityRow
+                key={g.ticket_id}
+                group={g}
+                expanded={expanded.has(g.ticket_id)}
+                onToggle={() => toggleExpanded(g.ticket_id)}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 }
 
 
-function TicketActivityCard({
+// ---------------------------------------------------------------------------
+// Row
+// ---------------------------------------------------------------------------
+
+function ActivityRow({
   group,
   expanded,
   onToggle,
-  onOpen,
-  isActive,
 }: {
   group: TicketGroup;
   expanded: boolean;
   onToggle: () => void;
-  onOpen: () => void;
-  isActive: boolean;
 }) {
-  const status: AgentStatus = group.session?.derived_status ?? 'pending';
   const confidence = group.session?.classification_confidence ?? null;
 
-  // The "Awaiting review" pending marker is added inline when the session
-  // has a draft but no feedback yet.
+  return (
+    <li>
+      <div
+        onClick={onToggle}
+        className="flex items-center px-4 h-10 hover:bg-hover cursor-pointer transition-colors duration-150 border-b border-line-subtle"
+        role="button"
+        aria-expanded={expanded}
+      >
+        <ChevronRight
+          width={14}
+          height={14}
+          strokeWidth={2}
+          className={`text-ink-muted shrink-0 transition-transform duration-150 ${
+            expanded ? 'rotate-90' : ''
+          }`}
+        />
+        <TicketIdLink group={group} />
+        <StatusOrIcon group={group} />
+        <span className="text-[12px] font-mono text-ink-muted ml-3 w-20 shrink-0">
+          {formatTimeOfDay(group.latest_at)}
+        </span>
+        {!group.isPlaybookOnly && confidence != null && (
+          <span className="text-[12px] font-mono text-ink-muted ml-2">
+            conf {confidence.toFixed(2)}
+          </span>
+        )}
+        <span className="text-[12px] text-ink-muted ml-auto shrink-0">
+          {group.events.length} event{group.events.length === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      {expanded && (
+        <ExpandedTimeline group={group} />
+      )}
+    </li>
+  );
+}
+
+
+function TicketIdLink({ group }: { group: TicketGroup }) {
+  const baseClass =
+    'text-[13px] font-medium font-mono ml-2 w-24 shrink-0 truncate transition-colors duration-150';
+  if (group.isGlobalConfig) {
+    return (
+      <span className={`${baseClass} text-ink-muted`}>{group.ticket_id}</span>
+    );
+  }
+  if (group.isPlaybookOnly) {
+    return (
+      <Link
+        to={`/knowledge/${group.ticket_id}`}
+        onClick={(e) => e.stopPropagation()}
+        className={`${baseClass} text-purple-700 hover:underline`}
+        title="Open playbook"
+      >
+        {group.ticket_id}
+      </Link>
+    );
+  }
+  return (
+    <Link
+      to={`/inbox/${group.ticket_id}`}
+      onClick={(e) => e.stopPropagation()}
+      className={`${baseClass} text-accent-fg hover:underline`}
+    >
+      {group.ticket_id}
+    </Link>
+  );
+}
+
+
+function StatusOrIcon({ group }: { group: TicketGroup }) {
+  if (group.isGlobalConfig) {
+    return (
+      <span className="ml-2 flex items-center gap-1.5">
+        <Settings width={13} height={13} strokeWidth={1.75} className="text-ink-muted" />
+        <span className="text-[11px] font-mono bg-hover text-ink-muted rounded px-1.5 py-0.5">
+          config
+        </span>
+      </span>
+    );
+  }
+  if (group.isPlaybookOnly) {
+    return (
+      <span className="ml-2 text-[11px] font-mono bg-hover text-purple-700 rounded px-1.5 py-0.5">
+        playbook
+      </span>
+    );
+  }
+  return (
+    <span
+      title={group.session?.derived_status ?? 'pending'}
+      className={`ml-2 w-2 h-2 rounded-full shrink-0 ${rowStatusDot(group)}`}
+    />
+  );
+}
+
+
+function ExpandedTimeline({ group }: { group: TicketGroup }) {
   const showAwaiting =
     group.session?.recommended_action &&
     !group.session.feedback_status &&
     group.session.derived_status !== 'auto_resolved' &&
     group.session.derived_status !== 'skipped';
 
-  // A group whose events are all suggestion or config events belongs to
-  // a playbook (or to the global config pseudo-ticket), not to a real
-  // ticket — the right-hand detail panel can't render it.
-  const isPlaybookOnly =
-    group.events.length > 0 &&
-    group.events.every(
-      (e) => isSuggestionEvent(e.event_type) || e.event_type === 'config_change',
-    );
-  const isGlobalConfig = group.ticket_id === 'config';
-
   return (
-    <div
-      className={`bg-panel-surface border rounded-lg transition-colors ${
-        isActive ? 'border-blue-400' : 'border-panel-border'
-      }`}
-    >
-      <div className="flex items-center gap-3 px-3 py-2">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-label={expanded ? 'Collapse' : 'Expand'}
-          className="w-5 h-5 inline-flex items-center justify-center text-slate-400 hover:text-slate-700"
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className={`transition-transform ${expanded ? 'rotate-90' : ''}`}
+    <div className="border-b border-line-subtle bg-app pl-12 pr-4 py-3">
+      <ul className="space-y-px">
+        {group.events.map((e, i) => (
+          <li
+            key={`${e.timestamp}-${e.event_type}-${i}`}
+            className="flex items-center gap-3 py-1.5"
           >
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </button>
-        {isGlobalConfig ? (
-          <span className="text-[12px] font-mono text-slate-600 flex items-center gap-1.5">
-            <GearIcon className="text-slate-400" />
-            {group.ticket_id}
-          </span>
-        ) : isPlaybookOnly ? (
-          <Link
-            to={`/knowledge/${group.ticket_id}`}
-            className="text-[12px] font-mono text-purple-700 hover:text-purple-900 hover:underline flex items-center gap-1.5"
-            title="Open playbook"
-          >
-            <PencilIcon className="text-purple-500" />
-            {group.ticket_id}
-          </Link>
-        ) : (
-          <button
-            type="button"
-            onClick={onOpen}
-            className="text-[12px] font-mono text-blue-600 hover:text-blue-800 hover:underline"
-          >
-            {group.ticket_id}
-          </button>
-        )}
-        {isGlobalConfig ? (
-          <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium border rounded bg-slate-100 text-slate-700 border-slate-200">
-            config
-          </span>
-        ) : isPlaybookOnly ? (
-          <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-medium border rounded bg-purple-50 text-purple-700 border-purple-200">
-            playbook
-          </span>
-        ) : (
-          <AgentStatusPill status={status} />
-        )}
-        <span className="text-[11px] text-slate-500 font-mono">
-          {formatTimeOfDay(group.latest_at)}
-        </span>
-        {!isPlaybookOnly && confidence != null && (
-          <span className="text-[11px] text-slate-500 font-mono">
-            conf {confidence.toFixed(2)}
-          </span>
-        )}
-        <span className="ml-auto text-[11px] text-slate-400">
-          {group.events.length} event{group.events.length === 1 ? '' : 's'}
-        </span>
-      </div>
-      {expanded && (
-        <ol className="border-t border-panel-divider divide-y divide-panel-divider">
-          {group.events.map((e, i) => (
-            <li
-              key={`${e.timestamp}-${e.event_type}-${i}`}
-              className="grid grid-cols-[88px_16px_120px_1fr] gap-3 items-baseline px-4 py-1.5 text-sm"
+            <span className="text-[11px] font-mono text-ink-muted w-24 shrink-0 tabular-nums">
+              {formatTime(e.timestamp)}
+            </span>
+            <EventIcon eventType={e.event_type} />
+            <span
+              className={`text-[12px] font-medium w-32 shrink-0 ${
+                e.event_type === 'config_change'
+                  ? 'text-ink-body'
+                  : isSuggestionEvent(e.event_type)
+                  ? 'text-purple-700'
+                  : 'text-ink'
+              }`}
             >
-              <span className="text-[11px] font-mono text-slate-500 tabular-nums">
-                {formatTime(e.timestamp)}
-              </span>
-              <span className="flex items-center justify-center">
-                {e.event_type === 'config_change' ? (
-                  <GearIcon className="text-slate-500" />
-                ) : isSuggestionEvent(e.event_type) ? (
-                  <PencilIcon
-                    className={
-                      e.event_type === 'suggestion_accepted'
-                        ? 'text-purple-600'
-                        : e.event_type === 'suggestion_rejected'
-                        ? 'text-purple-400'
-                        : 'text-purple-500'
-                    }
-                  />
-                ) : (
-                  <span
-                    className={`inline-block w-2 h-2 rounded-full ${EVENT_DOT[e.event_type]}`}
-                  />
-                )}
-              </span>
-              <span
-                className={`text-[12px] ${
-                  e.event_type === 'config_change'
-                    ? 'text-slate-600'
-                    : isSuggestionEvent(e.event_type)
-                    ? 'text-purple-700'
-                    : 'text-slate-700'
-                }`}
-              >
-                {labelForEvent(e.event_type)}
-              </span>
-              <span className="text-[13px] text-slate-700 leading-relaxed truncate">
-                {e.detail}
-              </span>
-            </li>
-          ))}
-          {showAwaiting && (
-            <li className="grid grid-cols-[88px_16px_120px_1fr] gap-3 items-baseline px-4 py-1.5 text-sm">
-              <span className="text-[11px] font-mono text-slate-400 tabular-nums">—</span>
-              <span className="flex items-center justify-center">
-                <span className="inline-block w-2 h-2 rounded-full bg-slate-300 animate-pulse" />
-              </span>
-              <span className="text-[12px] text-slate-500">Awaiting</span>
-              <span className="text-[13px] text-slate-500 italic">
-                Operator review pending
-              </span>
-            </li>
-          )}
-        </ol>
-      )}
+              {labelForEvent(e.event_type)}
+            </span>
+            <span className="text-[12px] text-ink-body leading-relaxed truncate">
+              {e.detail}
+            </span>
+          </li>
+        ))}
+        {showAwaiting && (
+          <li className="flex items-center gap-3 py-1.5">
+            <span className="text-[11px] font-mono text-ink-muted w-24 shrink-0">—</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-line shrink-0 animate-pulse" />
+            <span className="text-[12px] font-medium text-ink-muted w-32 shrink-0">
+              awaiting
+            </span>
+            <span className="text-[12px] text-ink-muted italic">
+              Operator review pending
+            </span>
+          </li>
+        )}
+      </ul>
     </div>
   );
 }
 
+
+function EventIcon({ eventType }: { eventType: AgentEventType }) {
+  if (eventType === 'config_change') {
+    return <Settings width={11} height={11} strokeWidth={1.75} className="text-ink-muted shrink-0" />;
+  }
+  if (isSuggestionEvent(eventType)) {
+    const tone =
+      eventType === 'suggestion_accepted'
+        ? 'bg-purple-600'
+        : eventType === 'suggestion_rejected'
+        ? 'bg-purple-400'
+        : 'bg-purple-500';
+    return <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${tone}`} />;
+  }
+  return <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${EVENT_DOT[eventType]}`} />;
+}
+
+
+// ---------------------------------------------------------------------------
+// Atoms
+// ---------------------------------------------------------------------------
+
+function EmptyState() {
+  return (
+    <div className="h-full flex flex-col items-center justify-center px-6 text-center">
+      <Activity width={40} height={40} strokeWidth={1.5} className="text-ink-muted opacity-50 mb-3" />
+      <p className="text-[13px] text-ink-muted">No events found</p>
+      <p className="mt-0.5 text-[12px] text-ink-muted opacity-70">Try a different filter</p>
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Date helpers
+// ---------------------------------------------------------------------------
 
 function formatTimeOfDay(iso: string): string {
   try {
@@ -583,6 +473,7 @@ function formatTimeOfDay(iso: string): string {
     return iso;
   }
 }
+
 
 function formatTime(iso: string): string {
   try {

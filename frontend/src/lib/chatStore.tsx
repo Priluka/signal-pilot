@@ -22,7 +22,7 @@ import {
 } from 'react';
 
 import { attachToChatSession, getChatSession, streamChatAnswer } from './api';
-import type { RetrievalHitOut } from './types';
+import type { CitationIndexEntry, RetrievalHitOut } from './types';
 
 
 export type ChatStatus = 'idle' | 'streaming' | 'done' | 'error';
@@ -34,6 +34,11 @@ interface ChatStore {
   topK: number;
   answer: string;
   sources: RetrievalHitOut[];
+  /** Server-resolved citation map. Every ``[id]`` in the answer is looked
+   * up against the full playbook corpus on the backend so the UI can
+   * render each citation as a real numbered, clickable link even when
+   * the model cited a playbook outside the retrieved top-K. */
+  citationIndex: CitationIndexEntry[];
   status: ChatStatus;
   errorMsg: string | null;
   activeSessionId: number | null;
@@ -102,6 +107,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
   });
   const [answer, setAnswer] = useState('');
   const [sources, setSources] = useState<RetrievalHitOut[]>([]);
+  const [citationIndex, setCitationIndex] = useState<CitationIndexEntry[]>([]);
   const [status, setStatus] = useState<ChatStatus>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
@@ -135,6 +141,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
         setAskedQuestion(s.question);
         setAnswer(s.answer);
         setSources(s.hits);
+        setCitationIndex(s.citation_index ?? []);
         setTopKState(Math.max(1, Math.min(5, s.top_k)));
         setActiveSessionId(s.id);
 
@@ -145,6 +152,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
             onDelta: (e) => setAnswer((prev) => prev + e.text),
             onDone: (e) => {
               setAnswer(e.answer);
+              if (e.citation_index) setCitationIndex(e.citation_index);
               setStatus('done');
               window.dispatchEvent(new Event('chat-sessions-changed'));
             },
@@ -178,6 +186,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
     abortRef.current?.abort();
     setAskedQuestion(q);
     setSources([]);
+    setCitationIndex([]);
     setAnswer('');
     setErrorMsg(null);
     setActiveSessionId(null);
@@ -203,6 +212,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
       onDelta: (e) => setAnswer((prev) => prev + e.text),
       onDone: (e) => {
         setAnswer(e.answer);
+        if (e.citation_index) setCitationIndex(e.citation_index);
         setActiveSessionId(e.session_id);
         if (e.session_id != null) writeString(LS_ACTIVE_ID, String(e.session_id));
         setStatus('done');
@@ -221,6 +231,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
     writeString(LS_DRAFT, null);
     setAskedQuestion('');
     setSources([]);
+    setCitationIndex([]);
     setAnswer('');
     setErrorMsg(null);
     setActiveSessionId(null);
@@ -237,6 +248,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
       setAskedQuestion(s.question);
       setAnswer(s.answer);
       setSources(s.hits);
+      setCitationIndex(s.citation_index ?? []);
       setTopKState(Math.max(1, Math.min(5, s.top_k)));
       setActiveSessionId(s.id);
       writeString(LS_ACTIVE_ID, String(s.id));
@@ -254,6 +266,7 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
     topK,
     answer,
     sources,
+    citationIndex,
     status,
     errorMsg,
     activeSessionId,
