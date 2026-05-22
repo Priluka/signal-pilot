@@ -55,12 +55,36 @@ def _build_user_prompt(*, question: str, playbooks: Sequence[Playbook]) -> str:
 
 
 def extract_cited_ids(text: str, playbooks: Sequence[Playbook]) -> list[str]:
-    """Return cited playbook ids in order of first appearance, deduped."""
+    """Return cited playbook ids in order of first appearance, deduped.
+
+    Only ids that are present in ``playbooks`` (the retrieved top-K) are
+    returned — used for the ``cited_ids`` field which records "which of
+    the retrieved sources did the model actually anchor on".
+    """
     known = {pb.id for pb in playbooks}
     seen: list[str] = []
     for match in _CITATION_RE.finditer(text):
         cid = match.group(1)
         if cid in known and cid not in seen:
+            seen.append(cid)
+    return seen
+
+
+def extract_all_cited_ids(text: str) -> list[str]:
+    """Return every ``[id]`` token in the text in order of first appearance.
+
+    Unlike :func:`extract_cited_ids`, this does NOT filter against the
+    retrieved set — the caller resolves each id against the full corpus
+    later to build the citation index. The point is that the model may
+    legitimately cite a playbook that wasn't in the top-K (the LLM has
+    "seen" them all through fine-tuning / context bleed), and the UI
+    should still resolve every citation to a real playbook instead of
+    rendering an unknown-source marker.
+    """
+    seen: list[str] = []
+    for match in _CITATION_RE.finditer(text):
+        cid = match.group(1)
+        if cid not in seen:
             seen.append(cid)
     return seen
 

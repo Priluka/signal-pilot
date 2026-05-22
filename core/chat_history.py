@@ -22,16 +22,17 @@ SessionStatus = str  # 'streaming' | 'done' | 'error' — checked in app code
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_sessions (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    question        TEXT NOT NULL,
-    answer          TEXT NOT NULL,
-    hits_json       TEXT NOT NULL,
-    cited_ids_json  TEXT NOT NULL DEFAULT '[]',
-    top_k           INTEGER NOT NULL,
-    timestamp       TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'streaming'
-                    CHECK (status IN ('streaming','done','error')),
-    error_message   TEXT
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    question             TEXT NOT NULL,
+    answer               TEXT NOT NULL,
+    hits_json            TEXT NOT NULL,
+    cited_ids_json       TEXT NOT NULL DEFAULT '[]',
+    citation_index_json  TEXT NOT NULL DEFAULT '[]',
+    top_k                INTEGER NOT NULL,
+    timestamp            TEXT NOT NULL,
+    status               TEXT NOT NULL DEFAULT 'streaming'
+                         CHECK (status IN ('streaming','done','error')),
+    error_message        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_ts ON chat_sessions(timestamp);
@@ -49,6 +50,11 @@ class ChatSession:
     timestamp: str
     status: str = "done"
     error_message: str | None = None
+    citation_index: list[dict[str, Any]] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.citation_index is None:
+            self.citation_index = []
 
 
 @contextmanager
@@ -68,9 +74,12 @@ def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
 
 
 def _migrate_if_needed(conn: sqlite3.Connection) -> None:
-    """Add the status + error_message columns if we're hitting a pre-status
-    schema. Existing rows (created when sessions only landed on done) get
-    status='done' so the history rail keeps showing them as completed."""
+    """Forward-only migrations for the chat_sessions table.
+
+    Adds new columns when older databases are opened so the runtime never
+    sees a missing field. Existing rows get sensible defaults so the
+    history rail keeps rendering them correctly.
+    """
     rows = conn.execute("PRAGMA table_info(chat_sessions)").fetchall()
     cols = {row[1] for row in rows}
     if cols and "status" not in cols:
@@ -84,6 +93,15 @@ def _migrate_if_needed(conn: sqlite3.Connection) -> None:
         # Pre-existing rows are by definition complete (the old code only
         # wrote on done) — mark them as such.
         conn.execute("UPDATE chat_sessions SET status = 'done' WHERE status = 'streaming'")
+    if cols and "citation_index_json" not in cols:
+        # citation_index resolves every `[id]` in the answer against the
+        # full playbook corpus (not just the top-K) so the UI can render
+        # all citations as proper numbered, clickable links. Old rows get
+        # an empty index; the GET handler computes one lazily on read.
+        conn.execute(
+            "ALTER TABLE chat_sessions "
+            "ADD COLUMN citation_index_json TEXT NOT NULL DEFAULT '[]'"
+        )
 
 
 def init_db(db_path: Path = config.FEEDBACK_DB_PATH) -> None:
@@ -93,6 +111,7 @@ def init_db(db_path: Path = config.FEEDBACK_DB_PATH) -> None:
 
 
 def _row_to_session(row: sqlite3.Row) -> ChatSession:
+    keys = row.keys()
     return ChatSession(
         id=row["id"],
         question=row["question"],
@@ -101,9 +120,14 @@ def _row_to_session(row: sqlite3.Row) -> ChatSession:
         cited_ids=json.loads(row["cited_ids_json"]),
         top_k=row["top_k"],
         timestamp=row["timestamp"],
-        status=row["status"] if "status" in row.keys() else "done",
+        status=row["status"] if "status" in keys else "done",
         error_message=(
-            row["error_message"] if "error_message" in row.keys() else None
+            row["error_message"] if "error_message" in keys else None
+        ),
+        citation_index=(
+            json.loads(row["citation_index_json"])
+            if "citation_index_json" in keys
+            else []
         ),
     )
 
@@ -144,6 +168,7 @@ def update_session(
     *,
     answer: str | None = None,
     cited_ids: list[str] | None = None,
+    citation_index: list[dict[str, Any]] | None = None,
     status: str | None = None,
     error_message: str | None = None,
     db_path: Path = config.FEEDBACK_DB_PATH,
@@ -160,6 +185,9 @@ def update_session(
     if cited_ids is not None:
         sets.append("cited_ids_json = ?")
         params.append(json.dumps(cited_ids))
+    if citation_index is not None:
+        sets.append("citation_index_json = ?")
+        params.append(json.dumps(citation_index))
     if status is not None:
         sets.append("status = ?")
         params.append(status)

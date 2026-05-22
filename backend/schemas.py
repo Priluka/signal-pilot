@@ -306,10 +306,31 @@ class ChatSessionSummary(BaseModel):
     status: str = "done"
 
 
+class CitationEntry(BaseModel):
+    """One row of the citation index — every ``[id]`` that appears in the
+    answer is resolved against the full playbook corpus (not just the
+    retrieved top-K) and returned as one of these.
+
+    ``in_topk=True`` means the model anchored on a source we actually
+    showed it; ``False`` means it cited a playbook from outside the
+    retrieved set (we'd never have shown it that source, but the
+    citation still resolves to a real playbook).
+
+    ``exists=False`` means the id wasn't found anywhere in the corpus —
+    the model hallucinated it. The UI should suppress these entirely.
+    """
+    playbook_id: str
+    title: str
+    description: str = ""
+    in_topk: bool = False
+    exists: bool = True
+
+
 class ChatSessionDetail(ChatSessionSummary):
     answer: str
     hits: list[RetrievalHitOut] = Field(default_factory=list)
     cited_ids: list[str] = Field(default_factory=list)
+    citation_index: list[CitationEntry] = Field(default_factory=list)
     error_message: str | None = None
 
 
