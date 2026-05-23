@@ -16,6 +16,12 @@
 
 :root,
 :root.light {
+  /* Tells the browser to render native form controls (select popups,
+   * date pickers, OS scrollbars when not styled, etc.) in light mode.
+   * The dark variant below flips this so a <select>'s OS-rendered
+   * option menu also paints dark instead of jarring white-on-dark. */
+  color-scheme: light;
+
   /* Surfaces */
   --c-app: 245 245 245;             /* #F5F5F5  shell + sidebar */
   --c-card: 255 255 255;            /* #FFFFFF  floating content panel + cards */
@@ -50,6 +56,7 @@
 }
 
 :root.dark {
+  color-scheme: dark;
   --c-app: 22 22 22;                /* #161616 */
   --c-card: 30 30 30;               /* #1E1E1E */
   --c-elevated: 37 37 37;
@@ -92,19 +99,32 @@ h2 { @apply text-sm font-semibold text-ink; }
 h3 { @apply text-sm font-semibold text-ink; }
 
 /* ---------- Scrollbar ---------- */
-.scrollbar-thin {
+/* Applied globally to every scrollable container — no need to remember
+   the .scrollbar-thin class on each consumer. The class is retained
+   below as a no-op alias so existing call sites keep compiling. */
+* {
   scrollbar-width: thin;
-  scrollbar-color: rgba(107, 107, 107, 0.55) transparent;
+  scrollbar-color: rgb(var(--c-line) / 0.85) transparent;
 }
-.scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background: rgba(107, 107, 107, 0.55);
+/* Track is 10px so we can inset the visible thumb 2px from the right
+   edge via a transparent right border + padding-box clip. Net visual
+   thumb width is ~6px sitting 2px off the container edge, which reads
+   as breathing room without changing scroll-area size. */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgb(var(--c-line) / 0.85);
   border-radius: 8px;
+  border: 2px solid transparent;
+  border-left-width: 2px;
+  border-right-width: 2px;
+  background-clip: padding-box;
 }
-.scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: rgba(107, 107, 107, 0.75);
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--c-line-strong));
+  background-clip: padding-box;
 }
-.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin { /* alias kept for backward compatibility */ }
 
 /* ---------- Inline citation pill (chat answers) ---------- */
 .sp-citation {

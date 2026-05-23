@@ -11,12 +11,18 @@
  * border instead of a full card so the prose reads like a document, not
  * a form field.
  */
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { ArrowUp, Sparkles } from 'lucide-react';
 
 import { ChatAnswer, buildCitationMap } from '../components/ChatAnswer';
 import { ChatHistorySidebar } from '../components/ChatHistorySidebar';
 import { useChatStore } from '../lib/chatStore';
+
+
+// Cap the auto-grown textarea around ~9 lines so the answer area is
+// never crushed by an absurdly long pasted question. Beyond this we
+// flip overflow to scrolling.
+const TEXTAREA_MAX_PX = 200;
 
 
 const EXAMPLE_QUESTIONS = [
@@ -29,6 +35,20 @@ const EXAMPLE_QUESTIONS = [
 export function ChatPage() {
   const chat = useChatStore();
   const answerScrollRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Auto-grow the textarea to fit content up to a cap. Reset to 'auto'
+  // first so shrink-back (e.g. after Backspace or programmatic clear)
+  // measures correctly. Beyond the cap we flip overflow-y to auto so
+  // the scrollbar appears only when the box can't grow any further.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const next = Math.min(el.scrollHeight, TEXTAREA_MAX_PX);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > TEXTAREA_MAX_PX ? 'auto' : 'hidden';
+  }, [chat.question]);
 
   // Auto-scroll the answer panel as new text streams in.
   useEffect(() => {
@@ -112,58 +132,29 @@ export function ChatPage() {
         {/* Input — bottom, pinned */}
         <div className="shrink-0 px-6 py-4">
           <form onSubmit={onSubmit} className="max-w-3xl mx-auto w-full">
-            <div className="relative bg-app border border-line-strong rounded-xl overflow-hidden shadow-sm focus-within:border-[#c8c8c8] focus-within:shadow-md transition-[box-shadow,border-color] duration-150">
+            <div className="bg-app border border-line-strong rounded-xl overflow-hidden shadow-sm focus-within:border-[#c8c8c8] dark:focus-within:border-[#5a5a5a] focus-within:shadow-md transition-[box-shadow,border-color] duration-150 flex flex-col">
               <textarea
+                ref={textareaRef}
                 value={chat.question}
                 onChange={(e) => chat.setQuestion(e.target.value)}
                 onKeyDown={onKeyDown}
                 placeholder="e.g. What do I tell a Croatian customer who got a parking fine despite paying via the app?"
                 disabled={isStreaming}
-                className="w-full bg-transparent px-4 pt-4 pb-12 text-[13px] text-ink placeholder:text-ink-muted resize-none focus:outline-none min-h-[100px] max-h-[200px]"
+                rows={1}
+                style={{ maxHeight: `${TEXTAREA_MAX_PX}px` }}
+                className="w-full bg-transparent px-4 pt-3 pb-1 text-[13px] text-ink placeholder:text-ink-muted resize-none focus:outline-none overflow-y-hidden block leading-[1.5]"
               />
-              <div className="absolute bottom-0 left-0 right-0 px-4 py-2.5 flex items-center gap-3 border-t border-line-subtle bg-app">
-                <label className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-ink-muted">Top-k</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={5}
-                    value={chat.topK}
-                    onChange={(e) =>
-                      chat.setTopK(Math.max(1, Math.min(5, Number(e.target.value))))
-                    }
-                    className="w-8 h-6 text-center text-[11px] font-mono bg-card border border-line rounded text-ink focus:outline-none focus:border-accent"
-                  />
-                  <span className="text-[11px] text-ink-muted">playbooks</span>
-                </label>
-                <div className="ml-auto" />
-                {(chat.askedQuestion ||
-                  chat.status === 'done' ||
-                  chat.status === 'error' ||
-                  isStreaming) && (
-                  <button
-                    type="button"
-                    onClick={chat.clear}
-                    className="text-[12px] text-ink-muted hover:text-ink-body px-2 h-7 transition-colors"
-                  >
-                    {isStreaming ? 'Cancel' : 'Clear'}
-                  </button>
-                )}
+              <div className="flex items-center justify-end px-2 pb-2 pt-1">
                 <button
                   type="submit"
                   disabled={!chat.question.trim() || isStreaming}
-                  className="inline-flex items-center gap-1.5 bg-accent text-white hover:bg-accent-hover rounded-lg px-4 h-8 text-[12px] font-medium transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label={isStreaming ? 'Streaming' : 'Send'}
+                  className="w-8 h-8 rounded-lg bg-accent hover:bg-accent-hover text-white flex items-center justify-center transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {isStreaming ? (
-                    <>
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-white/80 animate-pulse" />
-                      Thinking…
-                    </>
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-white/80 animate-pulse" />
                   ) : (
-                    <>
-                      Ask
-                      <ArrowUp width={13} height={13} strokeWidth={2.25} />
-                    </>
+                    <ArrowUp width={16} height={16} strokeWidth={2.25} />
                   )}
                 </button>
               </div>

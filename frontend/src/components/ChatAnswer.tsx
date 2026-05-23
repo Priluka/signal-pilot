@@ -60,7 +60,33 @@ export function ChatAnswer({
   const processed = useMemo(() => preprocess(text), [text]);
 
   return (
-    <div className="prose prose-sm prose-slate max-w-none min-w-0 break-words prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-pre:overflow-x-auto prose-headings:font-semibold prose-headings:tracking-tight prose-p:leading-relaxed">
+    <div
+      className={[
+        // Base prose container + dark-mode invert so the typography
+        // plugin's own colour stack flips correctly. We *also* pin
+        // every text channel to our theme CSS vars (text-ink /
+        // text-ink-body / text-accent-fg) — those switch automatically
+        // between light and dark because the underlying ``--c-*``
+        // variables are redefined on ``html.dark``. Result: text is
+        // always readable against the current panel background.
+        'prose prose-sm prose-slate dark:prose-invert',
+        'max-w-none min-w-0 break-words',
+        // Body channels — explicit so prose-slate's hardcoded slate-700
+        // can't bleed into dark mode (where slate-700 is nearly black).
+        'prose-headings:text-ink prose-headings:font-semibold prose-headings:tracking-tight',
+        'prose-p:text-ink prose-p:leading-relaxed',
+        'prose-strong:text-ink prose-li:text-ink',
+        'prose-em:text-ink prose-blockquote:text-ink-body',
+        'prose-a:text-accent-fg prose-a:no-underline hover:prose-a:underline',
+        // Inline code & code blocks — body colour for inline, force
+        // dark slab for fenced blocks regardless of theme so syntax
+        // contrast stays predictable.
+        'prose-code:text-ink-body prose-code:bg-hover prose-code:px-1 prose-code:rounded',
+        'prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-pre:overflow-x-auto',
+        // Tables (rare but happens) — same body colour.
+        'prose-th:text-ink prose-td:text-ink',
+      ].join(' ')}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -180,11 +206,25 @@ function CitationLink({ id, info }: { id: string; info: CitationInfo }) {
       >
         <Link
           to={`/knowledge/${id}`}
-          className={
+          // Inline Tailwind utilities (rather than the legacy
+          // .sp-citation CSS class) so the badge colour follows our
+          // theme tokens and the typography plugin's `prose-a`
+          // override can't silently take over. ``bg-accent-subtle``
+          // and ``text-accent-fg`` both resolve via ``--c-*`` vars
+          // that redefine on ``html.dark`` — light tint + dark fg in
+          // light mode, dark tint + light fg in dark mode.
+          className={[
+            'inline-flex items-center justify-center align-super',
+            'min-w-[18px] h-[18px] px-1 ml-0.5 mr-0.5',
+            'rounded text-[10px] font-mono font-semibold no-underline',
+            'transition-opacity duration-150 hover:opacity-80',
             info.in_topk
-              ? 'sp-citation'
-              : 'sp-citation sp-citation-soft'
-          }
+              ? 'bg-accent-subtle text-accent-fg'
+              : // out-of-top-K: quieter neutral tint so the operator
+                // can tell them apart at a glance, still readable in
+                // both themes.
+                'bg-hover text-ink-body',
+          ].join(' ')}
           title={
             info.in_topk
               ? undefined

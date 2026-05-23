@@ -15,6 +15,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Check, ChevronRight, Loader2 } from 'lucide-react';
 
 import {
   deleteAgentSession,
@@ -203,7 +204,7 @@ export function AgentTicketDetail({
         {loading && (
           <div className="text-sm text-ink-muted">Loading session…</div>
         )}
-        {error && <div className="text-sm text-red-600">{error}</div>}
+        {error && <div className="text-sm text-red-600 dark:text-red-400">{error}</div>}
 
         {!loading && session && (
           <>
@@ -276,18 +277,29 @@ export function AgentTicketDetail({
         )}
 
         {!loading && !session && source === 'jira' && (
-          <div className="border border-line bg-app rounded-lg px-4 py-6 text-sm text-ink-body text-center space-y-3">
-            <p>This Jira ticket hasn't been processed by the agent yet.</p>
+          <div className="border border-line bg-app rounded-lg px-6 py-6 text-sm text-ink-body text-center space-y-4">
+            {processing ? (
+              <ProcessingStepper />
+            ) : (
+              <p>This Jira ticket hasn't been processed by the agent yet.</p>
+            )}
             <button
               type="button"
               onClick={processNow}
               disabled={processing}
-              className="px-4 h-9 text-[13px] font-medium text-white bg-accent rounded-md hover:bg-accent-hover transition-colors duration-150 disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 px-4 h-9 text-[13px] font-medium text-white bg-accent rounded-md hover:bg-accent-hover transition-colors duration-150 disabled:opacity-60"
             >
-              {processing ? 'Classifying → retrieving → drafting…' : 'Process with agent'}
+              {processing ? (
+                <>
+                  <Loader2 width={13} height={13} className="animate-spin" />
+                  Working…
+                </>
+              ) : (
+                'Process with agent'
+              )}
             </button>
             {processError && (
-              <p className="text-[11px] text-red-600">{processError}</p>
+              <p className="text-[11px] text-red-600 dark:text-red-400">{processError}</p>
             )}
           </div>
         )}
@@ -727,7 +739,7 @@ function DecisionRow({
           type="button"
           onClick={onReject}
           disabled={submitting}
-          className="mr-auto inline-flex items-center px-4 h-9 text-[13px] font-medium bg-transparent border border-red-200 text-red-600 rounded-md hover:bg-red-50 transition-colors duration-150 disabled:opacity-60"
+          className="mr-auto inline-flex items-center px-4 h-9 text-[13px] font-medium bg-transparent border border-red-200 text-red-600 rounded-md hover:bg-red-50 dark:border-red-800/60 dark:text-red-400 dark:hover:bg-red-950/40 transition-colors duration-150 disabled:opacity-60"
         >
           Reject
         </button>
@@ -751,7 +763,7 @@ function DecisionRow({
         </button>
       </div>
       {submitError && (
-        <p className="mt-2 text-right text-[11px] text-red-600">{submitError}</p>
+        <p className="mt-2 text-right text-[11px] text-red-600 dark:text-red-400">{submitError}</p>
       )}
     </div>
   );
@@ -769,10 +781,14 @@ function DecisionBanner({
 }) {
   const isRejected = status === 'rejected';
   const tone = isRejected
-    ? 'bg-red-50 border-red-200'
-    : 'bg-emerald-50 border-emerald-200';
-  const textTone = isRejected ? 'text-red-700' : 'text-emerald-700';
-  const subTone = isRejected ? 'text-red-400' : 'text-emerald-500';
+    ? 'bg-red-50 border-red-200 dark:bg-red-950/40 dark:border-red-800/60'
+    : 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800/60';
+  const textTone = isRejected
+    ? 'text-red-700 dark:text-red-300'
+    : 'text-emerald-700 dark:text-emerald-300';
+  const subTone = isRejected
+    ? 'text-red-400 dark:text-red-500'
+    : 'text-emerald-500 dark:text-emerald-500';
   return (
     <div className={`flex items-center justify-between border rounded-lg px-4 py-3 mt-4 ${tone}`}>
       <span className="text-[13px]">
@@ -807,8 +823,8 @@ function AutoResolvedBanner({
   ticketKey: string;
 }) {
   return (
-    <div className="flex items-center justify-between border border-emerald-200 bg-emerald-50 rounded-lg px-4 py-3 mt-4">
-      <div className="flex items-center gap-2 text-[13px] text-emerald-700">
+    <div className="flex items-center justify-between border border-emerald-200 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/40 rounded-lg px-4 py-3 mt-4">
+      <div className="flex items-center gap-2 text-[13px] text-emerald-700 dark:text-emerald-300">
         <svg
           width="16"
           height="16"
@@ -818,7 +834,7 @@ function AutoResolvedBanner({
           strokeWidth="2.5"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="text-emerald-600 shrink-0"
+          className="text-emerald-600 dark:text-emerald-400 shrink-0"
         >
           <polyline points="20 6 9 17 4 12" />
         </svg>
@@ -832,7 +848,7 @@ function AutoResolvedBanner({
           href={jiraUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[12px] text-emerald-700 hover:underline font-medium inline-flex items-center gap-1"
+          className="text-[12px] text-emerald-700 dark:text-emerald-300 hover:underline font-medium inline-flex items-center gap-1"
         >
           Open {ticketKey}
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -843,7 +859,7 @@ function AutoResolvedBanner({
           </svg>
         </a>
       ) : (
-        <span className="text-[11px] font-mono text-emerald-600">{ticketKey}</span>
+        <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">{ticketKey}</span>
       )}
     </div>
   );
@@ -879,4 +895,106 @@ function formatTimestampFull(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// ProcessingStepper — animated stepper while /agent/process is in flight
+// ---------------------------------------------------------------------------
+// The backend endpoint is a single blocking call (classify + retrieve +
+// draft happen inside it without progress events), so we don't actually
+// know which sub-step is running at any given moment. We instead drive a
+// timer-based progression that mirrors typical timings — classify is
+// fast, retrieve is faster, draft dominates — and stay on "draft" until
+// the parent rerenders with the loaded session (which unmounts us).
+//
+// Visual: three pills in a row with a numbered/checkmark/spinner badge
+// + label, chevron connectors between them. Active = accent spinner;
+// done = emerald check; pending = muted bg-hover + number.
+
+type StepState = 'pending' | 'active' | 'done';
+
+
+function ProcessingStepper() {
+  // 0 = classify active, 1 = retrieve active, 2 = draft active.
+  const [stage, setStage] = useState<0 | 1 | 2>(0);
+
+  useEffect(() => {
+    const t1 = window.setTimeout(() => setStage(1), 1500);
+    const t2 = window.setTimeout(() => setStage(2), 1500 + 800);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, []);
+
+  const classify: StepState = stage > 0 ? 'done' : 'active';
+  const retrieve: StepState = stage > 1 ? 'done' : stage === 1 ? 'active' : 'pending';
+  const draft: StepState = stage === 2 ? 'active' : 'pending';
+
+  return (
+    <div className="flex items-center justify-center gap-2 select-none">
+      <Step index={1} label="Classify" state={classify} />
+      <StepConnector />
+      <Step index={2} label="Retrieve" state={retrieve} />
+      <StepConnector />
+      <Step index={3} label="Draft" state={draft} />
+    </div>
+  );
+}
+
+
+function Step({
+  index,
+  label,
+  state,
+}: {
+  index: number;
+  label: string;
+  state: StepState;
+}) {
+  const badge =
+    state === 'done' ? (
+      <Check width={11} height={11} strokeWidth={3} />
+    ) : state === 'active' ? (
+      <Loader2 width={11} height={11} className="animate-spin" strokeWidth={2.5} />
+    ) : (
+      <span className="text-[10px] font-semibold tabular-nums">{index}</span>
+    );
+  const badgeClass =
+    state === 'done'
+      ? 'bg-emerald-500 text-white'
+      : state === 'active'
+      ? 'bg-accent text-white'
+      : 'bg-hover text-ink-muted';
+  const labelClass =
+    state === 'active'
+      ? 'text-ink font-medium'
+      : state === 'done'
+      ? 'text-ink-body'
+      : 'text-ink-muted';
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className={`w-5 h-5 rounded-full inline-flex items-center justify-center transition-colors duration-200 ${badgeClass}`}
+      >
+        {badge}
+      </span>
+      <span className={`text-[12px] transition-colors duration-200 ${labelClass}`}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+
+function StepConnector() {
+  return (
+    <ChevronRight
+      width={12}
+      height={12}
+      strokeWidth={1.75}
+      className="text-ink-muted shrink-0"
+    />
+  );
 }

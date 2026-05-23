@@ -52,7 +52,7 @@ export function AgentInbox({ rows, loading, error }: Props) {
           <div className="px-4 py-6 text-sm text-ink-muted">Loading inbox…</div>
         )}
         {error && (
-          <div className="px-4 py-6 text-sm text-red-600">{error}</div>
+          <div className="px-4 py-6 text-sm text-red-600 dark:text-red-400">{error}</div>
         )}
         {!loading && !error && rows.length === 0 && (
           <div className="px-4 py-6 text-sm text-ink-muted">

@@ -21,27 +21,27 @@ const STATUS_META: Record<AgentStatus, { label: string; tone: string; dot: strin
   },
   needs_review: {
     label: 'needs review',
-    tone: 'bg-amber-50 text-amber-600 border-amber-200',
+    tone: 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60',
     dot: 'bg-amber-500',
   },
   escalated: {
     label: 'escalated',
-    tone: 'bg-red-50 text-red-600 border-red-200',
+    tone: 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800/60',
     dot: 'bg-red-500',
   },
   auto_drafted: {
     label: 'auto-drafted',
-    tone: 'bg-blue-50 text-blue-600 border-blue-200',
+    tone: 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/60',
     dot: 'bg-blue-500',
   },
   auto_resolved: {
     label: 'auto-sent',
-    tone: 'bg-emerald-50 text-emerald-600 border-emerald-200',
+    tone: 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
     dot: 'bg-emerald-500',
   },
   approved: {
     label: 'approved',
-    tone: 'bg-emerald-50 text-emerald-600 border-emerald-200',
+    tone: 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
     dot: 'bg-emerald-500',
   },
   rejected: {

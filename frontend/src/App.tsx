@@ -7,6 +7,7 @@ import { ChatPage } from './pages/ChatPage';
 import { GraphPage } from './pages/GraphPage';
 import { InboxPage } from './pages/InboxPage';
 import { KnowledgePage } from './pages/KnowledgePage';
+import { SettingsPage } from './pages/SettingsPage';
 import { SuggestionsPage } from './pages/SuggestionsPage';
 
 
@@ -29,6 +30,7 @@ function App() {
           <Route path="/agent/:ticketKey" element={<Navigate to="/inbox" replace />} />
           <Route path="/suggestions" element={<SuggestionsPage />} />
           <Route path="/agents" element={<AgentsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           {/* Old 'Coming soon' sub-routes now land on the Agents page. */}
           <Route path="/agents/deployed" element={<Navigate to="/agents" replace />} />
           <Route path="/agents/shadow" element={<Navigate to="/agents" replace />} />

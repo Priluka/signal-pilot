@@ -26,7 +26,7 @@ const TONE: Record<AgentMode, { pill: string; dot: string; label: string; tip: s
     tip: 'Approve posts the (clean) draft as a Jira comment.',
   },
   autonomous: {
-    pill: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    pill: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
     dot: 'bg-emerald-500',
     label: 'Autonomous',
     tip: 'Agent auto-posts when classifier confidence ≥ threshold.',

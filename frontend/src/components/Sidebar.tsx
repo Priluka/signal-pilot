@@ -2,17 +2,20 @@
  * shell. No border on the right — visual separation comes from the
  * floating content panel sitting to its right.
  *
- * Compact 220px wide, sectioned, Lucide icons, theme toggle pinned next
- * to the user avatar at the bottom.
+ * Top: user dropdown (theme toggle + settings link, more to come).
+ * Middle: Workspace / Review / Teams / System nav sections.
+ * Bottom: nothing for now — the old "OP / Operator" tile moved into
+ * the dropdown header so the rail itself stays quiet.
  */
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type ComponentType,
   type SVGProps,
 } from 'react';
-import { NavLink } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import {
   Activity,
   BookOpen,
@@ -22,7 +25,9 @@ import {
   Lightbulb,
   MessageSquare,
   Moon,
+  Settings as SettingsIcon,
   Sun,
+  Users,
 } from 'lucide-react';
 
 import { getAgentMetrics, getCategories, getSuggestionStats } from '../lib/api';
@@ -122,6 +127,21 @@ function ChatNavRow() {
 }
 
 
+function InactiveRow({ label, icon: Icon }: { label: string; icon: IconType }) {
+  return (
+    <div className="flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13px] text-ink-body hover:bg-hover hover:text-ink transition-colors duration-150 cursor-pointer">
+      <Icon
+        width={16}
+        height={16}
+        strokeWidth={1.75}
+        className="shrink-0 text-ink-muted"
+      />
+      <span className="truncate">{label}</span>
+    </div>
+  );
+}
+
+
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
     <div className="px-3 pt-4 pb-1 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
@@ -131,11 +151,14 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 }
 
 
+// ---------------------------------------------------------------------------
+// Sidebar
+// ---------------------------------------------------------------------------
+
 export function Sidebar() {
   const [playbooksCount, setPlaybooksCount] = useState<number | undefined>(undefined);
   const [suggestionsPending, setSuggestionsPending] = useState<number | undefined>(undefined);
   const [inboxCount, setInboxCount] = useState<number | undefined>(undefined);
-  const { theme, toggle } = useTheme();
 
   const refreshPlaybooks = useCallback(() => {
     getCategories()
@@ -171,28 +194,8 @@ export function Sidebar() {
 
   return (
     <aside className="w-[248px] shrink-0 flex flex-col py-3 px-2 bg-app">
-      {/* Workspace selector */}
-      <button
-        type="button"
-        className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-hover transition-colors duration-150 text-left"
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-6 h-6 rounded-md bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white font-semibold text-[11px] shrink-0">
-            P
-          </div>
-          <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-ink truncate tracking-tight">
-              Praxis
-            </div>
-            <div className="text-[10px] text-ink-muted truncate">
-              bMove · Support
-            </div>
-          </div>
-        </div>
-        <ChevronsUpDown width={14} height={14} strokeWidth={1.75} className="text-ink-muted shrink-0" />
-      </button>
+      <UserDropdown />
 
-      {/* Nav */}
       <nav className="flex-1 overflow-y-auto scrollbar-thin mt-1 -mx-2 px-2 space-y-px">
         <SectionHeading>Workspace</SectionHeading>
         <NavRow to="/knowledge" label="Playbooks" icon={BookOpen} count={playbooksCount} />
@@ -208,33 +211,104 @@ export function Sidebar() {
           count={suggestionsPending}
         />
 
+        <SectionHeading>Teams</SectionHeading>
+        <InactiveRow label="Support" icon={Users} />
+
         <SectionHeading>System</SectionHeading>
         <NavRow to="/agents" label="Agents" icon={Bot} />
       </nav>
-
-      {/* User + theme */}
-      <div className="mt-2 pt-3 border-t border-line-subtle flex items-center gap-2 px-1">
-        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 shrink-0 flex items-center justify-center text-[10px] font-semibold text-white">
-          OP
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-[12px] text-ink truncate font-medium">Operator</div>
-          <div className="text-[10px] text-ink-muted truncate">Support · Admin</div>
-        </div>
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
-          className="w-7 h-7 inline-flex items-center justify-center rounded-md text-ink-muted hover:bg-hover hover:text-ink transition-colors duration-150 shrink-0"
-        >
-          {theme === 'dark' ? (
-            <Sun width={15} height={15} strokeWidth={1.75} />
-          ) : (
-            <Moon width={15} height={15} strokeWidth={1.75} />
-          )}
-        </button>
-      </div>
     </aside>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// User dropdown — replaces the old workspace selector
+// ---------------------------------------------------------------------------
+
+function UserDropdown() {
+  const { theme, toggle } = useTheme();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClickAway(e: MouseEvent) {
+      const target = e.target as Node | null;
+      if (target && rootRef.current && !rootRef.current.contains(target)) {
+        setOpen(false);
+      }
+    }
+    function onEsc(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onClickAway);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onClickAway);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-hover transition-colors duration-150 text-left"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-6 h-6 rounded-md bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center text-white font-semibold text-[10px] shrink-0">
+            OP
+          </div>
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold text-ink truncate tracking-tight">
+              Operator
+            </div>
+            <div className="text-[10px] text-ink-muted truncate">
+              Support · Admin
+            </div>
+          </div>
+        </div>
+        <ChevronsUpDown
+          width={14}
+          height={14}
+          strokeWidth={1.75}
+          className="text-ink-muted shrink-0"
+        />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-line rounded-md shadow-md py-1 z-30">
+          <button
+            type="button"
+            onClick={() => {
+              toggle();
+              setOpen(false);
+            }}
+            className="w-full flex items-center justify-between px-3 py-1.5 text-[13px] text-ink-body hover:bg-hover hover:text-ink transition-colors duration-150"
+          >
+            <span className="flex items-center gap-2">
+              {theme === 'dark' ? (
+                <Sun width={14} height={14} strokeWidth={1.75} />
+              ) : (
+                <Moon width={14} height={14} strokeWidth={1.75} />
+              )}
+              Theme
+            </span>
+            <span className="text-[11px] text-ink-muted capitalize">{theme}</span>
+          </button>
+
+          <Link
+            to="/settings"
+            onClick={() => setOpen(false)}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-ink-body hover:bg-hover hover:text-ink transition-colors duration-150"
+          >
+            <SettingsIcon width={14} height={14} strokeWidth={1.75} />
+            Settings
+          </Link>
+        </div>
+      )}
+    </div>
   );
 }

@@ -6,7 +6,7 @@
  * place to show its event timeline. No cards, no right-side detail
  * pane — the row IS the detail.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Activity, ChevronRight, Settings } from 'lucide-react';
 
@@ -330,7 +330,7 @@ function TicketIdLink({ group }: { group: TicketGroup }) {
       <Link
         to={`/knowledge/${group.ticket_id}`}
         onClick={(e) => e.stopPropagation()}
-        className={`${baseClass} text-purple-700 hover:underline`}
+        className={`${baseClass} text-purple-700 dark:text-purple-300 hover:underline`}
         title="Open playbook"
       >
         {group.ticket_id}
@@ -362,7 +362,7 @@ function StatusOrIcon({ group }: { group: TicketGroup }) {
   }
   if (group.isPlaybookOnly) {
     return (
-      <span className="ml-2 text-[11px] font-mono bg-hover text-purple-700 rounded px-1.5 py-0.5">
+      <span className="ml-2 text-[11px] font-mono bg-hover text-purple-700 dark:text-purple-300 rounded px-1.5 py-0.5">
         playbook
       </span>
     );
@@ -384,33 +384,50 @@ function ExpandedTimeline({ group }: { group: TicketGroup }) {
     group.session.derived_status !== 'skipped';
 
   return (
-    <div className="border-b border-line-subtle bg-app pl-12 pr-4 py-3">
+    <div className="border-b border-line-subtle bg-hover pl-12 pr-4 py-3">
       <ul className="space-y-px">
-        {group.events.map((e, i) => (
+        {group.events.map((e, i) => {
+          // Show a date divider when the day rolls over between events.
+          // Without this, events at different dates with closer
+          // times-of-day read as out-of-order ("5:59 PM" sitting
+          // visually below "6:01 PM" even though it's days later).
+          const dayKey = e.timestamp.slice(0, 10); // YYYY-MM-DD
+          const prevDayKey =
+            i > 0 ? group.events[i - 1].timestamp.slice(0, 10) : null;
+          const showDay = prevDayKey !== dayKey;
+          return (
+          <Fragment key={`${e.timestamp}-${e.event_type}-${i}`}>
+          {showDay && <DayDivider iso={e.timestamp} />}
           <li
-            key={`${e.timestamp}-${e.event_type}-${i}`}
-            className="flex items-center gap-3 py-1.5"
+            className="py-1.5"
           >
-            <span className="text-[11px] font-mono text-ink-muted w-24 shrink-0 tabular-nums">
-              {formatTime(e.timestamp)}
-            </span>
-            <EventIcon eventType={e.event_type} />
-            <span
-              className={`text-[12px] font-medium w-32 shrink-0 ${
-                e.event_type === 'config_change'
-                  ? 'text-ink-body'
-                  : isSuggestionEvent(e.event_type)
-                  ? 'text-purple-700'
-                  : 'text-ink'
-              }`}
-            >
-              {labelForEvent(e.event_type)}
-            </span>
-            <span className="text-[12px] text-ink-body leading-relaxed truncate">
-              {e.detail}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] font-mono text-ink-muted w-24 shrink-0 tabular-nums">
+                {formatTime(e.timestamp)}
+              </span>
+              <EventIcon eventType={e.event_type} />
+              <span
+                className={`text-[12px] font-medium w-32 shrink-0 ${
+                  e.event_type === 'config_change'
+                    ? 'text-ink-body'
+                    : isSuggestionEvent(e.event_type)
+                    ? 'text-purple-700 dark:text-purple-300'
+                    : 'text-ink'
+                }`}
+              >
+                {labelForEvent(e.event_type)}
+              </span>
+              <span className="text-[12px] text-ink-body leading-relaxed truncate">
+                {e.detail}
+              </span>
+            </div>
+            {e.diff && (e.diff.old || e.diff.new) && (
+              <SuggestionDiffLines diff={e.diff} />
+            )}
           </li>
-        ))}
+          </Fragment>
+          );
+        })}
         {showAwaiting && (
           <li className="flex items-center gap-3 py-1.5">
             <span className="text-[11px] font-mono text-ink-muted w-24 shrink-0">—</span>
@@ -424,6 +441,50 @@ function ExpandedTimeline({ group }: { group: TicketGroup }) {
           </li>
         )}
       </ul>
+    </div>
+  );
+}
+
+
+function DayDivider({ iso }: { iso: string }) {
+  // Inline date header inserted between events when the day rolls over.
+  // Linear-style: hairline border on either side of a small mono label
+  // — visually quiet but disambiguates same-time-of-day collisions
+  // across days.
+  return (
+    <li className="flex items-center gap-3 pt-2 pb-1 select-none" aria-hidden="true">
+      <span className="w-24 shrink-0" />
+      <span className="flex items-center gap-2 flex-1 min-w-0">
+        <span className="h-px bg-line-subtle flex-1" />
+        <span className="text-[10px] uppercase tracking-wider font-medium text-ink-muted font-mono shrink-0">
+          {formatDay(iso)}
+        </span>
+        <span className="h-px bg-line-subtle flex-1" />
+      </span>
+    </li>
+  );
+}
+
+
+function SuggestionDiffLines({ diff }: { diff: { old: string | null; new: string | null } }) {
+  // Indent past the time (w-24 = 96px) + gap-3 (12px) + dot (~6-11px)
+  // + gap-3 (12px) so the diff lines anchor under the event-type label
+  // column. Mono font + colour-coded chevron prefix matches the diff
+  // styling in Suggestions view; truncate keeps long edits one-line.
+  return (
+    <div className="pl-[7.75rem] mt-1 space-y-0.5">
+      {diff.old && (
+        <div className="text-[11px] font-mono text-red-600 dark:text-red-400 truncate max-w-[640px]">
+          <span className="select-none mr-1">−</span>
+          <span className="line-through opacity-70">{diff.old}</span>
+        </div>
+      )}
+      {diff.new && (
+        <div className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 truncate max-w-[640px]">
+          <span className="select-none mr-1">+</span>
+          <span>{diff.new}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -482,6 +543,27 @@ function formatTime(iso: string): string {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
+
+function formatDay(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const today = new Date();
+    const sameYear = d.getFullYear() === today.getFullYear();
+    const sameDay =
+      sameYear &&
+      d.getMonth() === today.getMonth() &&
+      d.getDate() === today.getDate();
+    if (sameDay) return 'Today';
+    return d.toLocaleDateString(undefined, {
+      month: 'short',
+      day: '2-digit',
+      year: sameYear ? undefined : 'numeric',
     });
   } catch {
     return iso;

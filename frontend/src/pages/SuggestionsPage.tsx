@@ -123,7 +123,7 @@ export function SuggestionsPage() {
           <div className="px-6 py-6 text-sm text-ink-muted">Loading…</div>
         )}
         {error && (
-          <div className="px-6 py-6 text-sm text-red-600">{error}</div>
+          <div className="px-6 py-6 text-sm text-red-600 dark:text-red-400">{error}</div>
         )}
         {!loading && !error && filtered.length === 0 && (
           <EmptyState filter={filter} totalCount={counts.all} />
@@ -149,7 +149,13 @@ export function SuggestionsPage() {
               </>
             )}
             {resolvedGroup.length > 0 && (
-              <>
+              <div
+                className={
+                  pendingGroup.length > 0
+                    ? 'border-t border-line-subtle pt-6 mt-6'
+                    : ''
+                }
+              >
                 <GroupLabel>Resolved</GroupLabel>
                 <ul className="space-y-0">
                   {resolvedGroup.map((s) => (
@@ -161,7 +167,7 @@ export function SuggestionsPage() {
                     </li>
                   ))}
                 </ul>
-              </>
+              </div>
             )}
           </div>
         )}
@@ -320,7 +326,7 @@ function PendingCard({
   const kind = suggestion.type ?? 'edit';
   const isBullet = suggestion.section === 'when_applies';
   return (
-    <article className="bg-card border border-line rounded-lg p-4 mb-2">
+    <article className="bg-card border border-line rounded-lg p-4 mb-4">
       <CardHeader
         kind={kind}
         isBullet={isBullet}
@@ -336,7 +342,7 @@ function PendingCard({
           type="button"
           onClick={onReject}
           disabled={busy}
-          className="bg-transparent border border-red-200 text-red-600 hover:bg-red-50 rounded-md px-3 h-8 text-[12px] font-medium transition-colors duration-150 disabled:opacity-60"
+          className="bg-transparent border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800/60 dark:text-red-400 dark:hover:bg-red-950/40 rounded-md px-3 h-8 text-[12px] font-medium transition-colors duration-150 disabled:opacity-60"
         >
           Reject
         </button>
@@ -368,7 +374,7 @@ function ResolvedCard({
   const kind = suggestion.type ?? 'edit';
   const isBullet = suggestion.section === 'when_applies';
   return (
-    <article className="bg-app rounded-lg p-3.5 mb-2 opacity-75">
+    <article className="bg-app rounded-lg px-3.5 pt-3.5 pb-4 mb-4 border-b border-line-subtle opacity-75 dark:opacity-60">
       <CardHeader
         kind={kind}
         isBullet={isBullet}
@@ -432,24 +438,24 @@ function KindBadge({
 }) {
   if (kind === 'remove') {
     return (
-      <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-red-50 text-red-700 border border-red-200 shrink-0">
+      <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-red-50 text-red-700 border border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800/60 shrink-0">
         Removal
       </span>
     );
   }
   if (kind === 'add') {
     return isBullet ? (
-      <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+      <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60 shrink-0">
         New condition
       </span>
     ) : (
-      <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+      <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/60 shrink-0">
         New step
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-amber-50 text-amber-700 border border-amber-200 shrink-0">
+    <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60 shrink-0">
       Edit
     </span>
   );
@@ -461,16 +467,16 @@ function Diff({ suggestion }: { suggestion: SuggestionRecord }) {
   return (
     <div className="rounded-md overflow-hidden border border-line mb-3">
       {(kind === 'remove' || kind === 'edit') && (
-        <div className="bg-red-50 px-3.5 py-2.5 border-l-[3px] border-l-red-400 font-mono text-[12px] text-red-900">
-          <span className="text-red-600 mr-1.5 select-none">−</span>
+        <div className="bg-red-50 px-3.5 py-2.5 border-l-[3px] border-l-red-400 font-mono text-[12px] text-red-700 dark:bg-red-950/40 dark:text-red-200 dark:border-l-red-500">
+          <span className="text-red-600 dark:text-red-400 mr-1.5 select-none">−</span>
           <span className="line-through opacity-80 whitespace-pre-wrap leading-relaxed">
             {suggestion.old_text}
           </span>
         </div>
       )}
       {(kind === 'add' || kind === 'edit') && (
-        <div className="bg-emerald-50 px-3.5 py-2.5 border-l-[3px] border-l-emerald-500 font-mono text-[12px] text-emerald-900">
-          <span className="text-emerald-600 mr-1.5 select-none">+</span>
+        <div className="bg-emerald-50 px-3.5 py-2.5 border-l-[3px] border-l-emerald-500 font-mono text-[12px] text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-l-emerald-400">
+          <span className="text-emerald-600 dark:text-emerald-400 mr-1.5 select-none">+</span>
           <span className="whitespace-pre-wrap leading-relaxed">
             {suggestion.new_text}
           </span>
@@ -485,16 +491,16 @@ function StatusIndicator({ status }: { status: SuggestionRecord['status'] }) {
   if (status === 'accepted') {
     return (
       <div className="flex items-center gap-1.5 mt-2">
-        <Check width={14} height={14} strokeWidth={2} className="text-emerald-600" />
-        <span className="text-[11px] font-medium text-emerald-600">Accepted</span>
+        <Check width={14} height={14} strokeWidth={2} className="text-emerald-600 dark:text-emerald-400" />
+        <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">Accepted</span>
       </div>
     );
   }
   if (status === 'rejected') {
     return (
       <div className="flex items-center gap-1.5 mt-2">
-        <X width={14} height={14} strokeWidth={2} className="text-red-600" />
-        <span className="text-[11px] font-medium text-red-600">Rejected</span>
+        <X width={14} height={14} strokeWidth={2} className="text-red-600 dark:text-red-400" />
+        <span className="text-[11px] font-medium text-red-600 dark:text-red-400">Rejected</span>
       </div>
     );
   }

@@ -414,7 +414,7 @@ function ThresholdSection({
         />
         {/* Thumb */}
         <div
-          className="absolute top-1/2 w-4 h-4 rounded-full bg-card border-2 border-accent shadow-sm pointer-events-none"
+          className="absolute top-1/2 w-4 h-4 rounded-full bg-white border-2 border-accent shadow-sm pointer-events-none"
           style={{
             left: `${pct}%`,
             transform: 'translate(-50%, -50%)',

@@ -254,11 +254,21 @@ export type AgentEventType =
   | 'suggestion_rejected'
   | 'config_change';
 
+export interface SuggestionDiff {
+  /** Removed text — null for add/new-step suggestions. */
+  old: string | null;
+  /** Added text — null for removal suggestions. */
+  new: string | null;
+}
+
 export interface AgentActivityEvent {
   timestamp: string;
   ticket_id: string;
   event_type: AgentEventType;
   detail: string;
+  /** Populated only on suggestion_* events so the Activity Log can
+   * render the actual content change below the metadata line. */
+  diff?: SuggestionDiff | null;
 }
 
 export interface FeedbackRequest {

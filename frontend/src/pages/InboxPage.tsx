@@ -444,13 +444,13 @@ export function InboxPage() {
               Loading inbox…
             </div>
           ) : rowsError ? (
-            <div className="flex-1 flex items-center justify-center px-4 text-sm text-red-600 text-center">
+            <div className="flex-1 flex items-center justify-center px-4 text-sm text-red-600 dark:text-red-400 text-center">
               {rowsError}
             </div>
           ) : showEmptyList ? (
             sourceFilter === 'local' ? (
               <div className="flex-1 flex flex-col items-center justify-center px-4 text-center">
-                <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 mb-3">
+                <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300 mb-3">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
