@@ -36,7 +36,13 @@ from fastapi.responses import StreamingResponse
 from core import chat_history
 from core.answerer import extract_all_cited_ids, extract_cited_ids, stream_answer
 from core.embeddings import get_embedding_provider
-from core.retrieval import Playbook, PlaybookIndex, detect_language
+from core.retrieval import (
+    Playbook,
+    PlaybookIndex,
+    country_from_text,
+    detect_language,
+    keyword_boosted_playbooks,
+)
 
 from ..deps import get_playbook_index
 from ..schemas import (
@@ -294,11 +300,21 @@ def chat_answer(req: ChatRequest, request: Request) -> StreamingResponse:
 
     provider = get_embedding_provider()
     query_vector = np.asarray(provider.embed(req.question), dtype=np.float32)
+    # Free-text country/city detection: if the operator wrote "stuck
+    # session u Beču" or "Italian invoice requests" we want the
+    # country-specific playbook even though the sentence language is
+    # Croatian/English. When a country signal is present we drop the
+    # language filter (the query language is the operator's voice, not
+    # the location's) and apply the boost so close calls go the right
+    # way.
+    text_country = country_from_text(req.question)
     hits = index.search(
         query_vector,
-        country=None,
-        language=detect_language(req.question),
+        country=text_country,
+        language=None if text_country else detect_language(req.question),
         ticket_class=None,
+        country_boost=text_country,
+        keyword_boost_ids=keyword_boosted_playbooks(req.question),
         top_k=req.top_k,
     )
     hit_payload = [_hit_to_out(h).model_dump() for h in hits]

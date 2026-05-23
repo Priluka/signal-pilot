@@ -280,6 +280,15 @@ class AgentMetrics(BaseModel):
     avg_confidence: float = 0.0
 
 
+class SuggestionDiff(BaseModel):
+    """Content of a suggestion (old/new text) carried on activity events
+    so the Activity Log can show the actual diff inline, not just the
+    metadata."""
+
+    old: str | None = None
+    new: str | None = None
+
+
 class AgentActivityEvent(BaseModel):
     """One agent step or operator decision — derived from agent_sessions
     timestamps and rendered as a single row in the Activity log."""
@@ -288,6 +297,9 @@ class AgentActivityEvent(BaseModel):
     ticket_id: str
     event_type: str  # classified | retrieved | drafted | approved | edited | rejected | skipped | suggestion_created | suggestion_accepted | suggestion_rejected
     detail: str
+    # Populated only for suggestion_* events so the Activity Log can
+    # render the actual content change below the metadata line.
+    diff: SuggestionDiff | None = None
 
 
 # --- Chat ------------------------------------------------------------------

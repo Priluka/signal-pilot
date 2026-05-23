@@ -186,11 +186,24 @@ def process_ticket(
     playbook = next((pb for pb in playbooks if pb.id == top_pb_id), None)
     if playbook is None:
         return
+    # Surface attachment presence to the drafter so it can refuse to
+    # pretend to have seen a screenshot the customer claimed to send
+    # but that didn't actually arrive in the ticket payload. Jira
+    # tickets carry attachments under the ``attachment`` field (singular,
+    # per the REST API); local sample tickets may use ``attachments`` or
+    # not include the field at all (treated as unknown).
+    if "attachments" in ticket:
+        has_attachments: bool | None = bool(ticket.get("attachments"))
+    elif "attachment" in ticket:
+        has_attachments = bool(ticket.get("attachment"))
+    else:
+        has_attachments = None
     try:
         draft = draft_reply(
             ticket_summary=summary,
             ticket_description=description,
             playbook=playbook,
+            has_attachments=has_attachments,
         )
     except Exception as exc:  # noqa: BLE001
         _record_error(ticket_id, "draft", exc)

@@ -23,24 +23,123 @@ from core.embeddings import EmbeddingProvider, get_embedding_provider
 # Files that live in the playbooks tree but are not playbooks.
 _NON_PLAYBOOK_BASENAMES = {"_index.md", "README.md"}
 
-# Map of free-text country tokens (commonly seen in Jira labels) to ISO codes.
+# Map of free-text country tokens (commonly seen in Jira labels OR in the
+# body of the query itself, e.g. an operator typing "stuck session u Beču")
+# to ISO codes. Covers English country names, Croatian adjectives (the
+# operator's native voice), and the major cities in each country — most
+# location hints in real tickets are city names, not country names.
 _COUNTRY_TOKEN_TO_ISO: dict[str, str] = {
-    "croatia": "hr",
-    "croatian": "hr",
-    "hr": "hr",
-    "italy": "it",
-    "italian": "it",
-    "it": "it",
-    "austria": "at",
-    "austrian": "at",
-    "at": "at",
-    "slovakia": "sk",
-    "slovak": "sk",
-    "sk": "sk",
-    "germany": "de",
-    "german": "de",
-    "de": "de",
+    # English country names + ISO
+    "croatia": "hr", "croatian": "hr", "hr": "hr",
+    "italy": "it", "italian": "it", "italia": "it", "it": "it",
+    "austria": "at", "austrian": "at", "at": "at",
+    "slovakia": "sk", "slovak": "sk", "sk": "sk",
+    "germany": "de", "german": "de", "deutschland": "de", "de": "de",
+    # Croatian adjectives + country-name stems. Operators commonly
+    # write tickets in Croatian about customers in other countries.
+    # Stems (e.g. "italij") combined with the declension suffixes in
+    # _COUNTRY_TEXT_RE cover all noun cases of the country name:
+    # "Italija" / "Italije" / "Italiji" / "Italiju" / "Italijom".
+    "hrvatska": "hr", "hrvatski": "hr", "hrvatsk": "hr",
+    "talijanski": "it", "talijanska": "it", "talijan": "it", "italij": "it",
+    "austrijski": "at", "austrijska": "at", "austrijanac": "at", "austrij": "at",
+    "slovački": "sk", "slovačka": "sk", "slovačk": "sk",
+    "njemački": "de", "njemačka": "de", "nijemac": "de", "njemačk": "de",
+    # Cities — most location hints in the wild are city names
+    "zagreb": "hr", "rijeka": "hr", "osijek": "hr",
+    "dubrovnik": "hr", "zadar": "hr", "pula": "hr",
+    "rome": "it", "roma": "it", "milan": "it", "milano": "it",
+    "naples": "it", "napoli": "it", "turin": "it", "torino": "it",
+    "florence": "it", "firenze": "it", "venice": "it", "venezia": "it",
+    "bologna": "it", "bari": "it", "palermo": "it",
+    "vienna": "at", "wien": "at", "beč": "at",
+    "salzburg": "at", "graz": "at", "linz": "at",
+    "innsbruck": "at", "klagenfurt": "at",
+    "bratislava": "sk", "košice": "sk", "kosice": "sk",
+    "berlin": "de", "munich": "de", "münchen": "de", "muenchen": "de",
+    "hamburg": "de", "frankfurt": "de", "köln": "de", "koeln": "de",
+    "cologne": "de", "stuttgart": "de",
 }
+
+# Built once at import time — compiled re for free-text country/city
+# detection in queries. Two subtleties:
+#
+#   1. Only tokens >= 3 chars are eligible for text matching. The
+#      two-letter ISO codes ("at", "it", "de") would over-match common
+#      English words (e.g. "items" matches "it") and only make sense
+#      as exact label tokens, handled separately by country_from_labels.
+#
+#   2. Tokens are followed by an OPTIONAL declension/plural suffix from
+#      a fixed list — enough to absorb Croatian noun declensions
+#      ("Beč" + "u" = "Beču", locative case) and English plurals
+#      ("Italian" + "s"), but tight enough that "rome" doesn't match
+#      inside "romeo" and "bari" doesn't match inside "barista".
+_TEXT_TOKENS = {k: v for k, v in _COUNTRY_TOKEN_TO_ISO.items() if len(k) >= 3}
+
+_COUNTRY_TEXT_RE = re.compile(
+    r"\b(" + "|".join(
+        re.escape(tok) for tok in sorted(_TEXT_TOKENS, key=len, reverse=True)
+    ) + r")(?:a|e|i|u|oj|om|em|ima|ama|s|ski|ska|sko|ske|skog|skim|skih)?\b",
+    re.IGNORECASE | re.UNICODE,
+)
+
+# Bump applied to embedding similarity for playbooks whose country_focus
+# matches the location hint. Cosine sims live roughly in [0.3, 0.8]; a
+# bump of 0.10 is enough to flip rank when the embedding margin is small
+# but not enough to override a strong semantic mismatch.
+_COUNTRY_BOOST = 0.10
+
+# Same magnitude as the country boost — applied per-playbook when the
+# query carries one of the playbook's signature keywords. Used to nail
+# down high-confidence routes that pure semantic similarity misses (e.g.
+# an Italian-language "noleggio + addebito fantasma" query should land
+# on the rental-car ghost-charge playbook regardless of how the embedder
+# ranks Italian phrasing against Croatian playbook text).
+_KEYWORD_BOOST = 0.10
+
+# {playbook_id: [compiled regex patterns]} — when ANY pattern matches
+# the query text, the named playbook gets a score bump in search(). Keep
+# this dict tight: only add an entry when the playbook is unambiguously
+# the right route for the keyword (false positives here are worse than
+# nothing, because they bias retrieval). All patterns are word-bounded
+# and case-insensitive.
+_PLAYBOOK_KEYWORD_BOOSTS: dict[str, list[str]] = {
+    # Tourist returns rental car → next renter triggers a Ticketless
+    # charge against the previous holder's still-linked Bmove account.
+    # Signature tokens across the four big languages we see.
+    "croatia-ticketless-rental-car-ghost-charge": [
+        r"\bnoleggio\b",      # IT
+        r"\bnoleggi\w*\b",    # IT declensions (noleggiata, noleggiare)
+        r"\baddebito fantasma\b",  # IT "ghost charge"
+        r"\brental\b",        # EN
+        r"\brent[- ]?a[- ]?car\b",  # EN
+        r"\bMietwagen\b",     # DE
+        r"\bnajam\b",         # HR
+        r"\bnajml?j?en\w*\b", # HR declensions (najmljen, najmljeno, najmljena)
+        r"\bghost charge\b",  # EN
+        r"\bphantom charge\b",  # EN
+    ],
+}
+_PLAYBOOK_KEYWORD_RES: dict[str, list] = {
+    pb_id: [re.compile(p, re.IGNORECASE | re.UNICODE) for p in pats]
+    for pb_id, pats in _PLAYBOOK_KEYWORD_BOOSTS.items()
+}
+
+
+def keyword_boosted_playbooks(text: str) -> set[str]:
+    """Return the set of playbook ids the query text should boost.
+
+    Returns the empty set when no signature keywords are present, which
+    is the common case. The set is consumed by ``PlaybookIndex.search``
+    as a soft preference on top of the embedding rank.
+    """
+    if not text:
+        return set()
+    out: set[str] = set()
+    for pb_id, patterns in _PLAYBOOK_KEYWORD_RES.items():
+        if any(p.search(text) for p in patterns):
+            out.add(pb_id)
+    return out
 
 _SECTION_RE = re.compile(
     r"^#{2,}\s+(?P<title>.+?)\s*\n(?P<body>.*?)(?=^#{2,}\s|\Z)",
@@ -214,6 +313,8 @@ class PlaybookIndex:
         country: str | None = None,
         language: str | None = None,
         ticket_class: str | None = None,
+        country_boost: str | None = None,
+        keyword_boost_ids: set[str] | None = None,
         top_k: int = config.TOP_K_RETRIEVAL,
         min_confidence: float = config.MIN_RETRIEVAL_CONFIDENCE,
     ) -> list[RetrievalHit]:
@@ -223,6 +324,22 @@ class PlaybookIndex:
         if candidates.size == 0:
             candidates = np.arange(len(self.playbooks))
         sims = self.embeddings[candidates] @ query_vector
+        # Country boost: when the query carries a location hint, lift the
+        # score of playbooks whose ``country_focus`` explicitly contains
+        # that ISO code. Tuned to flip rank when the embedding margin is
+        # small (e.g. "Italian invoice" vs a generic invoice playbook),
+        # not enough to override a strong semantic mismatch.
+        if country_boost:
+            for local_idx, global_idx in enumerate(candidates):
+                if country_boost in self.playbooks[int(global_idx)].country_focus:
+                    sims[local_idx] += _COUNTRY_BOOST
+        # Keyword boost: per-playbook signature tokens lifted when the
+        # query unambiguously routes there ("noleggio + addebito" → the
+        # rental ghost-charge playbook).
+        if keyword_boost_ids:
+            for local_idx, global_idx in enumerate(candidates):
+                if self.playbooks[int(global_idx)].id in keyword_boost_ids:
+                    sims[local_idx] += _KEYWORD_BOOST
         order = np.argsort(-sims)[:top_k]
         hits: list[RetrievalHit] = []
         for rank, local_idx in enumerate(order):
@@ -324,6 +441,27 @@ def country_from_labels(labels: Iterable[str]) -> str | None:
     return None
 
 
+def country_from_text(text: str) -> str | None:
+    """Detect a country ISO code from a free-text query.
+
+    Scans the query for any known country name, adjective, or major city
+    (see ``_COUNTRY_TOKEN_TO_ISO``) and returns the first match. The
+    point is to handle operator queries like ``"stuck session u Beču"``
+    (Vienna mentioned in Croatian sentence) or ``"Italian invoice
+    requests"`` (country adjective) that would otherwise route purely
+    on the detected sentence language and miss the country-specific
+    playbook.
+
+    Returns ``None`` if nothing is found.
+    """
+    if not text:
+        return None
+    match = _COUNTRY_TEXT_RE.search(text)
+    if not match:
+        return None
+    return _TEXT_TOKENS[match.group(1).lower()]
+
+
 def retrieve(
     index: PlaybookIndex,
     ticket_text: str,
@@ -333,13 +471,50 @@ def retrieve(
     top_k: int = config.TOP_K_RETRIEVAL,
     provider: EmbeddingProvider | None = None,
 ) -> list[RetrievalHit]:
-    """End-to-end retrieval for one ticket: detect language + country, embed, search."""
+    """End-to-end retrieval for one ticket: detect language + country,
+    embed, search.
+
+    Country signal priority:
+
+      1. Jira label match (``country_from_labels``) — the most reliable
+         signal because the label was set deliberately. The detected
+         language is also kept as a filter, since the ticket is usually
+         written in the customer's language.
+
+      2. Free-text country/city mention in the query
+         (``country_from_text``) — fired e.g. by an operator typing
+         ``"stuck session u Beču"``. When this is the only signal we
+         deliberately drop the language filter, because the query
+         language reflects the operator's voice (Croatian) and would
+         otherwise wipe out the location-relevant playbook (tagged
+         with the customer's language, e.g. German for Austria).
+
+      3. Neither — fall back to language filter only, no country.
+
+    The detected country (from labels OR text) is also passed as a
+    soft score boost, so even when filtering would let a non-matching
+    playbook through, the location-relevant one wins close calls.
+    """
     provider = provider or get_embedding_provider()
     query_vector = np.asarray(provider.embed(ticket_text), dtype=np.float32)
+    label_country = country_from_labels(labels or [])
+    if label_country is not None:
+        country: str | None = label_country
+        language: str | None = detect_language(ticket_text)
+    else:
+        text_country = country_from_text(ticket_text)
+        if text_country is not None:
+            country = text_country
+            language = None
+        else:
+            country = None
+            language = detect_language(ticket_text)
     return index.search(
         query_vector,
-        country=country_from_labels(labels or []),
-        language=detect_language(ticket_text),
+        country=country,
+        language=language,
         ticket_class=ticket_class,
+        country_boost=country,
+        keyword_boost_ids=keyword_boosted_playbooks(ticket_text),
         top_k=top_k,
     )

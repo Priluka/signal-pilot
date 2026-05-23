@@ -28,12 +28,22 @@ EMBEDDING_CACHE_PATH: Path = CACHE_DIR / "playbook_embeddings.npz"
 TOP_K_RETRIEVAL: int = int(os.environ.get("TOP_K_RETRIEVAL", "3"))
 MIN_RETRIEVAL_CONFIDENCE: float = float(os.environ.get("MIN_RETRIEVAL_CONFIDENCE", "0.25"))
 
-# Claude API — drafter + classifier
+# Claude API — three model slots so we can dial cost/latency/quality
+# per surface without touching code. Defaults can be overridden in .env.
+#   - Classifier stays on Haiku: ticket triage runs on every inbox row,
+#     latency dominates UX, and the task is mostly pattern-matching.
+#   - Drafter runs on Opus: the customer-facing draft must be the best
+#     prose we can produce; quality dominates cost.
+#   - Chat (Knowledge tab Q&A) also runs on Opus: this is the operator's
+#     research surface, used many times per day to make real decisions
+#     on real tickets, so quality dominates here too.
 ANTHROPIC_API_KEY: str | None = os.environ.get("ANTHROPIC_API_KEY")
 CLASSIFIER_MODEL: str = os.environ.get("CLASSIFIER_MODEL", "claude-haiku-4-5-20251001")
-DRAFTER_MODEL: str = os.environ.get("DRAFTER_MODEL", "claude-sonnet-4-6")
+DRAFTER_MODEL: str = os.environ.get("DRAFTER_MODEL", "claude-opus-4-7")
+CHAT_MODEL: str = os.environ.get("CHAT_MODEL", "claude-opus-4-7")
 CLASSIFIER_MAX_TOKENS: int = 256
 DRAFTER_MAX_TOKENS: int = 1500
+CHAT_MAX_TOKENS: int = int(os.environ.get("CHAT_MAX_TOKENS", "2000"))
 
 # Ticket sample for the Agent tab
 TICKET_SAMPLE_FILE: Path = TICKETS_DIR / "sample.jsonl"

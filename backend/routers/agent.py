@@ -19,6 +19,7 @@ from core.retrieval import (
 from ..deps import get_playbook_index, get_playbooks, get_tickets
 from ..schemas import (
     AgentActivityEvent,
+    SuggestionDiff,
     AgentConfig,
     AgentConfigUpdate,
     AgentMetrics,
@@ -379,17 +380,30 @@ def list_activity(limit: int = 500) -> list[AgentActivityEvent]:
         )
 
     # Suggestion lifecycle events — grouped under the playbook id so all
-    # activity for a given playbook shows up together in the log.
+    # activity for a given playbook shows up together in the log. The
+    # actual content change (old → new text) rides along on the ``diff``
+    # field so the UI can render the proposed edit inline without a
+    # second round-trip to /suggestions.
     for sug in suggestions_store.list_suggestions():
         step_str = f" · Step {sug.step_number}" if sug.step_number is not None else ""
         section_str = sug.section.replace("_", " ")
         verb = {"edit": "edit", "add": "add", "remove": "remove"}.get(sug.type, sug.type)
+        if sug.type == "add":
+            diff = SuggestionDiff(old=None, new=sug.new_text or None)
+        elif sug.type == "remove":
+            diff = SuggestionDiff(old=sug.old_text or None, new=None)
+        else:  # edit (default)
+            diff = SuggestionDiff(
+                old=sug.old_text or None,
+                new=sug.new_text or None,
+            )
         events.append(
             AgentActivityEvent(
                 timestamp=sug.timestamp,
                 ticket_id=sug.playbook_id,
                 event_type="suggestion_created",
                 detail=f"#{sug.id} {verb} · {section_str}{step_str} · by {sug.author}",
+                diff=diff,
             )
         )
         if sug.status in ("accepted", "rejected") and sug.decided_at:
@@ -399,6 +413,7 @@ def list_activity(limit: int = 500) -> list[AgentActivityEvent]:
                     ticket_id=sug.playbook_id,
                     event_type=f"suggestion_{sug.status}",
                     detail=f"#{sug.id} {verb} · {section_str}{step_str}",
+                    diff=diff,
                 )
             )
 

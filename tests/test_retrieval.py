@@ -23,6 +23,7 @@ from core.retrieval import (
     PlaybookIndex,
     build_index,
     country_from_labels,
+    country_from_text,
     discover_playbook_paths,
     load_playbook,
     retrieve,
@@ -291,3 +292,82 @@ def test_retrieve_end_to_end_with_labels(playbooks_dir: Path, stub_embedder: Stu
     )
     # parking query → hr-parking-fail axis; labels resolve to country=hr.
     assert hits[0].playbook.id == "hr-parking-fail"
+
+
+# ---------------------------------------------------------------------------
+# country_from_text — free-text city/country detection in queries
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # City names — the most common location signal in real queries
+        ("stuck session u Beču", "at"),
+        ("Vienna parking dispute", "at"),
+        ("Wien session bug", "at"),
+        ("customer in Rome", "it"),
+        ("session in Milano", "it"),
+        ("Munich charge issue", "de"),
+        ("München session", "de"),
+        ("Bratislava parking", "sk"),
+        # Country adjectives / names in either language
+        ("Italian invoice requests", "it"),
+        ("austrijski korisnik dobio kaznu", "at"),
+        ("talijanski zahtjev za fakturu", "it"),
+        ("German customer query", "de"),
+        # No location hint
+        ("generic invoice question", None),
+        ("how do I issue a refund", None),
+        ("", None),
+    ],
+)
+def test_country_from_text(text: str, expected: str | None) -> None:
+    assert country_from_text(text) == expected
+
+
+def test_retrieve_uses_text_country_when_no_label(
+    playbooks_dir: Path, stub_embedder: StubEmbedder, tmp_path: Path
+) -> None:
+    """Operator writes about Italy in English; no labels → text-derived
+    country should route to it-invoice over generic playbooks."""
+    index = build_index(
+        playbooks_dir=playbooks_dir,
+        cache_path=tmp_path / "cache.npz",
+        provider=stub_embedder,
+    )
+    hits = retrieve(
+        index,
+        ticket_text="Italian invoice request",
+        labels=[],
+        provider=stub_embedder,
+    )
+    assert hits[0].playbook.id == "it-invoice"
+
+
+def test_search_country_boost_lifts_matching_playbook(
+    playbooks_dir: Path, stub_embedder: StubEmbedder, tmp_path: Path
+) -> None:
+    """Without boost the embedding alone might prefer a generic match;
+    with boost, a playbook explicitly tagged for the location wins
+    close calls."""
+    index = build_index(
+        playbooks_dir=playbooks_dir,
+        cache_path=tmp_path / "cache.npz",
+        provider=stub_embedder,
+    )
+    qvec = np.asarray(stub_embedder.embed("invoice"), dtype=np.float32)
+    # No boost → generic ranking
+    baseline = index.search(qvec, top_k=3)
+    boosted = index.search(qvec, country_boost="it", top_k=3)
+    # Boosted ranking must place the it-tagged playbook at the top (or
+    # at least no lower than baseline did).
+    it_baseline_rank = next(
+        (i for i, h in enumerate(baseline) if h.playbook.id == "it-invoice"),
+        None,
+    )
+    it_boosted_rank = next(
+        (i for i, h in enumerate(boosted) if h.playbook.id == "it-invoice"),
+        None,
+    )
+    assert it_boosted_rank is not None
+    if it_baseline_rank is not None:
+        assert it_boosted_rank <= it_baseline_rank
