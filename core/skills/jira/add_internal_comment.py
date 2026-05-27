@@ -71,7 +71,7 @@ class JiraAddInternalComment(Skill):
         text = f"@{mention} {body}" if mention else body
 
         try:
-            response = jira_client.add_comment(ticket_id, text)
+            response = jira_client.add_comment(ticket_id, text, internal=True)
         except jira_client.JiraConfigError as exc:
             return SkillResult(ok=False, error=f"jira_not_configured: {exc}")
         except Exception as exc:  # noqa: BLE001

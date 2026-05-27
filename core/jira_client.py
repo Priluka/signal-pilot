@@ -114,13 +114,110 @@ def get_ticket(issue_key: str) -> dict[str, Any]:
 # Comment
 # ---------------------------------------------------------------------------
 
-def add_comment(issue_key: str, body_text: str) -> dict[str, Any]:
-    """Post a plain-text comment to ``issue_key``. Returns the Jira response."""
-    payload = {"body": _text_to_adf(body_text)}
+def add_comment(
+    issue_key: str,
+    body_text: str,
+    *,
+    internal: bool = False,
+) -> dict[str, Any]:
+    """Post a plain-text comment to ``issue_key``. Returns the Jira response.
+
+    When ``internal=True`` the comment is tagged with the JSM
+    ``sd.public.comment`` property so it stays hidden from the customer
+    portal. On non-JSM projects the property is silently ignored — the
+    comment posts as normal.
+    """
+    payload: dict[str, Any] = {"body": _text_to_adf(body_text)}
+    if internal:
+        payload["properties"] = [
+            {"key": "sd.public.comment", "value": {"internal": True}}
+        ]
     with _client() as c:
         r = c.post(f"/rest/api/3/issue/{issue_key}/comment", json=payload)
         r.raise_for_status()
         return r.json()
+
+
+def list_comments(
+    issue_key: str,
+    max_results: int = 50,
+) -> list[dict[str, Any]]:
+    """Return comments on ``issue_key`` oldest-first.
+
+    Each entry is ``{id, author, created, body, internal}`` — body is
+    flattened to plain text via ``_adf_to_text``, internal is detected
+    from the JSM ``sd.public.comment`` property when present.
+    """
+    with _client() as c:
+        r = c.get(
+            f"/rest/api/3/issue/{issue_key}/comment",
+            params={"maxResults": str(max_results), "orderBy": "created"},
+        )
+        r.raise_for_status()
+        data = r.json()
+    out: list[dict[str, Any]] = []
+    for comment in data.get("comments", []) or []:
+        author = comment.get("author") or {}
+        internal = False
+        for prop in comment.get("properties") or []:
+            if prop.get("key") == "sd.public.comment":
+                internal = bool((prop.get("value") or {}).get("internal"))
+                break
+        out.append(
+            {
+                "id": comment.get("id"),
+                "author": author.get("displayName") or author.get("emailAddress") or "",
+                "created": comment.get("created"),
+                "body": _adf_to_text(comment.get("body")).strip(),
+                "internal": internal,
+            }
+        )
+    return out
+
+
+def get_transitions(issue_key: str) -> list[dict[str, Any]]:
+    """List transitions currently valid for ``issue_key``.
+
+    Each entry is ``{id, name, to_name}`` — ``to_name`` is the status
+    the transition lands on, which is what callers usually want to
+    match against.
+    """
+    with _client() as c:
+        r = c.get(f"/rest/api/3/issue/{issue_key}/transitions")
+        r.raise_for_status()
+        data = r.json()
+    out: list[dict[str, Any]] = []
+    for t in data.get("transitions", []) or []:
+        to = t.get("to") or {}
+        out.append({"id": t.get("id"), "name": t.get("name"), "to_name": to.get("name")})
+    return out
+
+
+def transition(issue_key: str, target_status: str) -> dict[str, Any]:
+    """Apply the transition that lands ``issue_key`` on ``target_status``.
+
+    Looks up valid transitions, picks the one whose ``to_name`` matches
+    (case-insensitive). Raises ``ValueError`` if no such transition is
+    available — the planner surfaces this as a failed skill result so
+    Claude can pick a different action.
+    """
+    transitions = get_transitions(issue_key)
+    norm = target_status.strip().lower()
+    match = next(
+        (t for t in transitions if (t["to_name"] or "").lower() == norm),
+        None,
+    )
+    if match is None:
+        available = [t["to_name"] for t in transitions if t["to_name"]]
+        raise ValueError(
+            f"No transition to {target_status!r} available "
+            f"(have: {available})"
+        )
+    payload = {"transition": {"id": match["id"]}}
+    with _client() as c:
+        r = c.post(f"/rest/api/3/issue/{issue_key}/transitions", json=payload)
+        r.raise_for_status()
+    return {"applied": match["to_name"], "transition_id": match["id"]}
 
 
 # ---------------------------------------------------------------------------
