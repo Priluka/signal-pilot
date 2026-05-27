@@ -105,8 +105,10 @@ export function ChatHistorySidebar({ activeId, onSelect, onNewChat }: Props) {
                         {s.question}
                       </div>
                       <div className="mt-1 text-[10px] text-ink-muted">
-                        {formatTimestamp(s.timestamp)} · {s.source_count} src
-                        {s.citation_count > 0 && ` · ${s.citation_count} cited`}
+                        {(() => {
+                          const n = s.citation_count > 0 ? s.citation_count : s.source_count;
+                          return `${formatTimestamp(s.timestamp)} · ${n} source${n === 1 ? '' : 's'}`;
+                        })()}
                       </div>
                     </div>
                     <button

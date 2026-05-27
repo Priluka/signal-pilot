@@ -10,6 +10,7 @@ import type { ForceGraphMethods } from 'react-force-graph-2d';
 import { useNavigate } from 'react-router-dom';
 
 import { getGraph } from '../lib/api';
+import { reliabilityTier, ticketClassLabel } from '../lib/labels';
 import type { GraphNode } from '../lib/types';
 
 
@@ -244,32 +245,37 @@ function NodeTooltip({ node }: { node: RenderNode }) {
             className="inline-block w-1.5 h-1.5 rounded-full"
             style={{ background: colorFor(node.ticket_class) }}
           />
-          {node.ticket_class}
+          {ticketClassLabel(node.ticket_class)}
         </span>
         <span className="text-ink-muted">{node.issue_category}</span>
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-3 text-[11px]">
-        <div>
-          <div className="uppercase tracking-wider text-ink-muted font-semibold text-[10px]">
-            Cluster
+      {(() => {
+        const rel = reliabilityTier(node.extraction_confidence);
+        return (
+          <div className="mt-2 grid grid-cols-3 gap-3 text-[11px]">
+            <div>
+              <div className="uppercase tracking-wider text-ink-muted font-semibold text-[10px]">
+                Tickets
+              </div>
+              <div className="text-ink-body font-mono">{node.cluster_size ?? '—'}</div>
+            </div>
+            <div>
+              <div className="uppercase tracking-wider text-ink-muted font-semibold text-[10px]">
+                Reliability
+              </div>
+              <div className="text-ink-body">
+                {rel != null ? `${rel.tier} (${rel.percent}%)` : '—'}
+              </div>
+            </div>
+            <div>
+              <div className="uppercase tracking-wider text-ink-muted font-semibold text-[10px]">
+                Links
+              </div>
+              <div className="text-ink-body font-mono">{node.degree}</div>
+            </div>
           </div>
-          <div className="text-ink-body font-mono">{node.cluster_size ?? '—'}</div>
-        </div>
-        <div>
-          <div className="uppercase tracking-wider text-ink-muted font-semibold text-[10px]">
-            Conf
-          </div>
-          <div className="text-ink-body font-mono">
-            {node.extraction_confidence?.toFixed(2) ?? '—'}
-          </div>
-        </div>
-        <div>
-          <div className="uppercase tracking-wider text-ink-muted font-semibold text-[10px]">
-            Links
-          </div>
-          <div className="text-ink-body font-mono">{node.degree}</div>
-        </div>
-      </div>
+        );
+      })()}
       <div className="mt-2 text-[10px] text-ink-muted">Click to open playbook</div>
     </div>
   );

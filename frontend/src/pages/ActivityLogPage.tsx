@@ -215,7 +215,7 @@ export function ActivityLogPage() {
     <div className="h-full flex flex-col">
       {/* Header */}
       <header className="h-12 px-4 flex items-center border-b border-line-subtle shrink-0">
-        <h1 className="text-base font-semibold text-ink tracking-tight">Activity Log</h1>
+        <h1 className="text-base font-semibold text-ink tracking-tight">History</h1>
       </header>
 
       {/* Filter chips */}
