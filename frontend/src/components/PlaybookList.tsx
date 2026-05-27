@@ -11,6 +11,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, ListFilter } from 'lucide-react';
 
 import type { PlaybookSummary } from '../lib/types';
+import { sourceLabel, ticketClassLabel } from '../lib/labels';
 
 import {
   applyFilters,
@@ -148,13 +149,13 @@ export function PlaybookList({
                     {pb.title}
                   </div>
                   <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[11px] text-ink-muted">
-                    <span>{pb.ticket_class}</span>
+                    <span>{ticketClassLabel(pb.ticket_class)}</span>
                     {pb.project_keys.map((k) => (
                       <span
                         key={k}
-                        className="font-mono bg-app border border-line rounded px-1 py-0.5 text-[10px] text-ink-muted"
+                        className="bg-app border border-line rounded px-1.5 py-0.5 text-[10px] text-ink-muted"
                       >
-                        {k}
+                        {sourceLabel(k)}
                       </span>
                     ))}
                   </div>

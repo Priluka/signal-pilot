@@ -109,6 +109,55 @@ class CategoriesResponse(BaseModel):
     by_ticket_class: dict[str, list[CountedName]] = Field(default_factory=dict)
 
 
+# --- Discovery report ------------------------------------------------------
+class DiscoveryCategoryEntry(BaseModel):
+    name: str
+    count: int
+    playbook_titles: list[str] = Field(default_factory=list)
+
+
+class DiscoveryCountryEntry(BaseModel):
+    code: str
+    count: int
+
+
+class DiscoveryROISummary(BaseModel):
+    baseline_hours: float
+    agent_assist_hours: float
+    autonomous_hours: float
+
+
+class DiscoveryGap(BaseModel):
+    category: str
+    count: int
+
+
+class DiscoveryTopPlaybook(BaseModel):
+    id: str
+    title: str
+    cluster_size: int
+
+
+class DiscoveryQuality(BaseModel):
+    min: float | None = None
+    max: float | None = None
+    avg: float | None = None
+    low_confidence_count: int = 0
+
+
+class DiscoveryReport(BaseModel):
+    total_playbooks: int
+    total_tickets_covered: int
+    avg_confidence: float | None = None
+    categories: list[DiscoveryCategoryEntry] = Field(default_factory=list)
+    countries: list[DiscoveryCountryEntry] = Field(default_factory=list)
+    languages: list[CountedName] = Field(default_factory=list)
+    roi_summary: DiscoveryROISummary
+    gaps: list[DiscoveryGap] = Field(default_factory=list)
+    top_playbooks: list[DiscoveryTopPlaybook] = Field(default_factory=list)
+    quality: DiscoveryQuality
+
+
 # --- Knowledge graph -------------------------------------------------------
 class GraphNode(BaseModel):
     id: str

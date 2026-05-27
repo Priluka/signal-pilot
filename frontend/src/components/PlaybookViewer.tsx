@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm';
 import { BookOpen, ChevronRight, Pencil, Plus, X } from 'lucide-react';
 
 import { submitSuggestion } from '../lib/api';
+import { countryLabel, sourceLabel, ticketClassLabel } from '../lib/labels';
 import type { PlaybookDetail, TicketActionRow } from '../lib/types';
 
 
@@ -430,20 +431,21 @@ function Header({ playbook }: { playbook: PlaybookDetail }) {
       </h1>
       <div className="mt-1 text-[12px] font-mono text-ink-muted">{playbook.id}</div>
       <div className="mt-3 flex flex-wrap gap-1.5">
-        <Tag accent>{playbook.ticket_class}</Tag>
+        <Tag accent>{ticketClassLabel(playbook.ticket_class)}</Tag>
         <Tag>{playbook.issue_category}</Tag>
         {playbook.country_focus
           .filter((c) => c !== 'other')
-          .map((c) => (
-            <Tag key={`country-${c}`}>country: {c}</Tag>
-          ))}
-        {playbook.languages
-          .filter((l) => l !== 'other')
-          .map((l) => (
-            <Tag key={`lang-${l}`}>lang: {l}</Tag>
-          ))}
+          .map((c) => {
+            const { flag, name } = countryLabel(c);
+            return (
+              <Tag key={`country-${c}`}>
+                {flag && <span className="mr-1">{flag}</span>}
+                {name}
+              </Tag>
+            );
+          })}
         {playbook.project_keys.map((k) => (
-          <Tag key={`src-${k}`}>source: {k}</Tag>
+          <Tag key={`src-${k}`}>From: {sourceLabel(k)}</Tag>
         ))}
       </div>
     </header>

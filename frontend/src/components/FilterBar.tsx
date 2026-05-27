@@ -5,6 +5,7 @@
  * only ever sees values that exist in the data.
  */
 import type { PlaybookSummary } from '../lib/types';
+import { countryLabel, sourceLabel, ticketClassLabel } from './../lib/labels';
 
 
 export interface PlaybookFilterState {
@@ -22,6 +23,24 @@ function uniqSorted(values: Iterable<string>, drop: Set<string> = new Set()): st
     set.add(v);
   }
   return Array.from(set).sort();
+}
+
+
+/** Resolve a friendly label for a given filter key. The dropdown <option>
+ *  value stays the raw code (URL stability); only the visible text changes. */
+function labelFor(filterKey: keyof PlaybookFilterState, raw: string): string {
+  switch (filterKey) {
+    case 'ticket_class':
+      return ticketClassLabel(raw);
+    case 'source':
+      return sourceLabel(raw);
+    case 'country': {
+      const { flag, name } = countryLabel(raw);
+      return flag ? `${flag} ${name}` : name;
+    }
+    default:
+      return raw;
+  }
 }
 
 
@@ -46,11 +65,13 @@ interface Props {
 
 function FilterSelect({
   label,
+  filterKey,
   value,
   options,
   onChange,
 }: {
   label: string;
+  filterKey: keyof PlaybookFilterState;
   value: string | undefined;
   options: string[];
   onChange: (v: string | undefined) => void;
@@ -68,7 +89,7 @@ function FilterSelect({
         <option value="">All</option>
         {options.map((opt) => (
           <option key={opt} value={opt}>
-            {opt}
+            {labelFor(filterKey, opt)}
           </option>
         ))}
       </select>
@@ -84,24 +105,28 @@ export function FilterBar({ filters, onChange, options }: Props) {
       <div className="grid grid-cols-2 gap-2">
         <FilterSelect
           label="Ticket class"
+          filterKey="ticket_class"
           value={filters.ticket_class}
           options={options.ticket_class}
           onChange={(v) => onChange({ ...filters, ticket_class: v })}
         />
         <FilterSelect
           label="Category"
+          filterKey="issue_category"
           value={filters.issue_category}
           options={options.issue_category}
           onChange={(v) => onChange({ ...filters, issue_category: v })}
         />
         <FilterSelect
           label="Country"
+          filterKey="country"
           value={filters.country}
           options={options.country}
           onChange={(v) => onChange({ ...filters, country: v })}
         />
         <FilterSelect
           label="Source"
+          filterKey="source"
           value={filters.source}
           options={options.source}
           onChange={(v) => onChange({ ...filters, source: v })}
