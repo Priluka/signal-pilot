@@ -1,30 +1,28 @@
 # Agent Implementation Guide
 
-_v2.0 · 2026-05-27 · pojednostavljeno_
+_v3.0 · 2026-05-27 · demo-focused_
+
+> **Scope**: ovo je plan za **demo verziju**, ne produkciju. Demo prikazuje da agent može stvarno izvršiti akciju kroz HITL approval. Produkcijske dodatke (full audit, multi-playbook migration, monitoring) dodajemo poslije demo-a.
 
 ---
 
 ## 1. Problem
 
-Trenutno agent samo predlaže draft teksta. Ne može izvršiti akciju u Jira-i, IGeus-u, niti igdje drugdje.
+Agent danas samo predlaže draft. Demo mora pokazati da agent može **stvarno izvršiti akciju** (Jira comment, transition) safe-by-default (allow-list + HITL).
 
 ```
 ticket → classify → retrieve → draft  ← stane ovdje
 ```
 
-Treba: agent koji **stvarno izvršava akcije**, ali **safe-by-default** (allow-list + HITL za rizično + audit).
-
 ---
 
 ## 2. Rješenje — koncept
 
-**Tri stvari:**
+1. **Skill** = Python klasa (name, description, input_schema, execute). Wraps `jira_client`.
+2. **`allowed_skills` u playbook YAML frontmatter-u** — popis dozvoljenih Skills. Claude fizički ne može pozvati ništa izvan liste.
+3. **Agent loop** — Anthropic `tool_use` API. Claude predloži → validator → execute ili HITL → ponavlja.
 
-1. **Skill** = Python klasa (name, description, input_schema, execute). Wraps `jira_client` itd.
-2. **`allowed_skills` u playbook YAML frontmatter-u** — popis dozvoljenih Skills za taj playbook. Claude fizički ne može pozvati ništa izvan liste.
-3. **Agent loop** — koristi Anthropic `tool_use` API. Claude predloži → validator → execute ili HITL → audit log → ponavlja dok ne kaže gotov.
-
-**Ključni uvid**: Claude čita cijeli markdown body kao prose. **Ne trebamo parsirati bullete.** Strogi parser ide samo na frontmatter (allow-list).
+**Ključni uvid**: Claude čita cijeli markdown body kao prose. **Ne parsiramo bullete.** Strogi parser ide samo na frontmatter.
 
 ---
 
@@ -33,11 +31,7 @@ Treba: agent koji **stvarno izvršava akcije**, ali **safe-by-default** (allow-l
 ```
 ticket
   ↓
-classify (postojeće)
-  ↓
-retrieve (postojeće) → matched playbook
-  ↓
-draft (postojeće) → tekst odgovora
+classify / retrieve / draft (postojeće)
   ↓
 PLANNER (novo)
   loop:
@@ -48,8 +42,6 @@ PLANNER (novo)
     Validator: in allow-list? schema OK? mode allows?
     ↓
     Read auto / Write HITL (po mode + skill.is_write)
-    ↓
-    Audit log
     ↓
     tool_result → natrag Claude-u
   end_turn → done
@@ -66,30 +58,29 @@ PLANNER (novo)
 | Modes (shadow/assisted/autonomous) | `core/agent_config.py` |
 | Skill ABC, registry | `core/skills/` |
 | Prvi primjer skill | `core/skills/jira/add_internal_comment.py` |
-| Test playbook | `data/playbooks/.../test-receipt-copy-request.md` |
+| **Test playbook** za demo | `data/playbooks/.../test-receipt-copy-request.md` |
 | Katalog | `docs/SKILLS.md` |
 
 ---
 
-## 5. Što treba implementirati
+## 5. Što treba implementirati za DEMO
 
 | File | Što | Procjena |
 |---|---|---|
 | `core/skills/jira/get_history.py` | Read-only history | 0.5 dan |
 | `core/skills/jira/add_public_comment.py` | Public reply (write) | 0.5 dan |
 | `core/skills/jira/transition.py` | Status change (write) | 0.5 dan |
-| `core/skills/jira/add_label.py` | Label (write, low-risk) | 0.25 dan |
 | `core/skills/validator.py` | Provjeri tool call | 0.25 dan |
-| `core/agent_actions.py` | SQLite audit + CRUD | 0.5 dan |
+| `core/pending_actions.py` | Minimal HITL state (4 polja) | 0.25 dan |
 | `core/planner.py` | Agent loop | 1.5 dan |
 | `backend/routers/actions.py` | HITL endpoints | 0.5 dan |
 | `frontend/.../ActionApproval.tsx` | UI panel | 1.5 dan |
 | Hook u `core/agent_runner.py` | Pokreni planner | 0.25 dan |
-| Testovi | Unit + E2E | 1 dan |
+| Manual E2E test | s test playbook-om | 0.25 dan |
 
-**Ukupno: ~7 dana.**
+**Ukupno: ~5-6 dana za demo.**
 
-> **Prije nego što kreneš s `planner.py`**: provjeri Claude Agent SDK (1 sat čitanja docs-a). Ako mapira čisto na ovu arhitekturu, koristi njega — uštedjet ćeš 1-2 dana i smanjit broj bug-ova.
+> **Prije nego što kreneš s `planner.py`**: provjeri Claude Agent SDK (1 sat). Ako mapira čisto, koristi njega — ušteda 1-2 dana.
 
 ---
 
@@ -105,7 +96,7 @@ from core.skills.registry import register
 @register
 class JiraTransition(Skill):
     name = "jira_transition"
-    description = "Change Jira ticket status. Use to move through workflow."
+    description = "Change Jira ticket status."
     is_write = True
 
     input_schema = {
@@ -132,48 +123,35 @@ class JiraTransition(Skill):
 
 Pravila:
 - `is_write = True` za bilo što side-effect-no
-- `input_schema` što stroge to bolje
 - `execute()` nikad ne raise → vrati `SkillResult(ok=False, error=...)`
 
 ---
 
-## 7. Playbook — promjene
+## 7. Playbook za demo
 
-### Frontmatter (strogi YAML, parser ovo ekstraktira)
+**Za demo NE migriraš nijedan produkcijski playbook. Koristiš postojeći test playbook.**
+
+`data/playbooks/end_user/billing/test-receipt-copy-request.md` već ima:
 
 ```yaml
 allowed_skills:
   - igeus_lookup_transaction
   - jira_add_public_comment
+  - jira_add_internal_comment
   - jira_transition
 
-agent_compatibility:
-  autonomous_resolve: false        # postojeće — gateira write skills u autonomous modu
+status: draft                              # ne ide u produkciju retrieval
 ```
 
-Bez `allowed_skills` polja → playbook ostaje draft-only (current behavior).
+**Ne diraš nijedan postojeći playbook. Nula ručnog pisanja bullete-a.**
 
-### Markdown body (Claude čita kao prose, parser ignorira)
-
-```markdown
-## Resolution bullets
-
-[res-00001] Lookup transakcije u IGeus-u
-  → koristi igeus_lookup_transaction
-  → auto (read-only)
-
-[res-00002] Storno karte
-  → koristi igeus_storno_card
-  → uvijek odobrenje (financijski rizik)
-```
-
-**Bullete su guidance za SME i za Claude. Nismo strogo parsiramo.** Format je opušten.
+> **Bullete u markdown body-ju** su guidance za SME i Claude (kao prose, ne parsiramo). Postojeći test playbook ih već ima — Claude čita prirodno.
 
 ---
 
 ## 8. Planner — agent loop
 
-> **Prvo provjeri Claude Agent SDK** — možda ti daje cijeli loop. Ako ne, custom:
+> Prvo provjeri Claude Agent SDK. Ako ne, custom:
 
 ```python
 # core/planner.py
@@ -185,7 +163,7 @@ def run(*, ticket, playbook, client=None, resume_action_id=None):
     tools = tools_for_playbook(playbook.metadata.get("allowed_skills", []))
 
     if resume_action_id:
-        messages, iteration = agent_actions.load_pause_state(resume_action_id)
+        messages, iteration = pending_actions.load(resume_action_id)
     else:
         messages = [_build_initial(ticket, playbook)]
         iteration = 0
@@ -211,51 +189,48 @@ def run(*, ticket, playbook, client=None, resume_action_id=None):
                 vr = validate(block, playbook, mode)
                 if not vr.ok:
                     results.append(_reject(block.id, vr.reason))
-                    audit(block, status="rejected", validation=vr)
                     continue
 
                 if mode == "shadow":
-                    audit(block, status="shadow")
+                    print(f"[SHADOW] bi pozvao {block.name} s {block.input}")
                     results.append(_shadow_result(block.id))
                     continue
 
                 if vr.requires_approval:
-                    action_id = audit(block, status="proposed",
-                                      messages=messages, iteration=iteration)
+                    action_id = pending_actions.save(
+                        ticket_id=ticket["key"],
+                        skill_name=block.name,
+                        skill_input=block.input,
+                        messages=messages,
+                        tool_use_id=block.id,
+                    )
                     return PlannerResult(status="awaiting_approval",
                                          pending_action_id=action_id)
 
                 skill = get_skill(block.name)
                 result = skill.execute(**block.input)
-                audit(block, status="executed" if result.ok else "failed",
-                      execution_result=result.data, error=result.error)
                 results.append(_format_result(block.id, result))
 
             messages.append({"role": "user", "content": results})
             continue
 
-        return PlannerResult(status="failed",
-                             error=f"unexpected: {response.stop_reason}")
+        return PlannerResult(status="failed", error=str(response.stop_reason))
 
     return PlannerResult(status="max_iterations")
 
 
 def resume(action_id, *, approved, edited_input=None):
-    state = agent_actions.load_pause_state(action_id)
+    state = pending_actions.load(action_id)
     if approved:
         skill = get_skill(state["skill_name"])
         result = skill.execute(**(edited_input or state["skill_input"]))
-        agent_actions.mark_executed(action_id, result, decided_by="user")
-    else:
-        agent_actions.mark_rejected(action_id, decided_by="user")
+    pending_actions.delete(action_id)
     return run(ticket=..., playbook=..., resume_action_id=action_id)
 ```
 
 ---
 
-## 9. Validator — što provjerava
-
-**Samo tri stvari:**
+## 9. Validator — tri provjere
 
 ```python
 def validate(tool_call, playbook, mode) -> ValidationResult:
@@ -269,23 +244,18 @@ def validate(tool_call, playbook, mode) -> ValidationResult:
     if skill is None:
         return ValidationResult(ok=False, reason="unknown_skill")
 
-    # 3. Mode + is_write → treba approval?
+    # 3. Treba approval?
     requires_approval = False
     if mode == "assisted" and skill.is_write:
         requires_approval = True
     if mode == "autonomous" and skill.is_write:
-        if not playbook.metadata["agent_compatibility"].get("autonomous_resolve"):
+        if not playbook.metadata.get("agent_compatibility", {}).get("autonomous_resolve"):
             requires_approval = True
 
-    # Schema već validira Anthropic SDK
     return ValidationResult(ok=True, requires_approval=requires_approval)
 ```
 
-**Nema bullet parsiranja. Nema bullet-level safety constraints. Sve safety dolazi iz:**
-- `allowed_skills` frontmatter (whitelist)
-- `skill.is_write` (Python class flag)
-- `playbook.autonomous_resolve` (frontmatter)
-- `mode` (shadow/assisted/autonomous)
+Schema validira Anthropic SDK automatski.
 
 ---
 
@@ -293,29 +263,53 @@ def validate(tool_call, playbook, mode) -> ValidationResult:
 
 | Mode | Read skill | Write skill |
 |---|---|---|
-| **shadow** | Log only | Log only — Jira API se nikad ne zove |
+| **shadow** | Print log, no execute | Print log, no execute |
 | **assisted** | Auto-execute | **Uvijek HITL** |
-| **autonomous** | Auto-execute | Auto ako `playbook.autonomous_resolve = true`, inače HITL |
+| **autonomous** | Auto-execute | Auto ako `autonomous_resolve = true`, inače HITL |
+
+Za demo pokazuješ: shadow → assisted progresija.
 
 ---
 
-## 11. HITL flow
+## 11. HITL state — minimalan
+
+**Za demo ne treba puni audit log. Samo state za resume nakon ✓.**
+
+```sql
+CREATE TABLE pending_actions (
+    id            TEXT PRIMARY KEY,        -- UUID
+    ticket_id     TEXT NOT NULL,
+    skill_name    TEXT NOT NULL,
+    skill_input   TEXT NOT NULL,           -- JSON
+    messages_blob TEXT NOT NULL,           -- JSON cijela povijest
+    tool_use_id   TEXT NOT NULL,           -- za format_result
+    iteration     INTEGER NOT NULL,
+    created_at    TEXT NOT NULL
+);
+```
+
+**Briše se nakon execute** (nije permanent audit trail).
+
+> **Za produkciju kasnije**: proširi u `agent_actions` s validation/execution/decided_by/status povijesti. Za demo to nije potrebno.
+
+---
+
+## 12. HITL flow
 
 ```
 Claude predloži write skill
        ↓
-Validator OK ali requires_approval=true
+Validator OK, requires_approval=true
        ↓
-Planner:
-  • UUID action_id
-  • INSERT agent_actions (status=proposed, messages_blob=...)
-  • return AwaitingApproval(action_id)
+pending_actions.save(...) → action_id
        ↓
-[Loop stane. Process slobodan.]
+Planner vrati AwaitingApproval(action_id)
        ↓
-Frontend dohvati pending actions
+[Loop stane.]
        ↓
-UI prikaže: skill name, params, [✓] [✗] [Edit]
+Frontend dohvati pending list
+       ↓
+UI: skill name, params, [✓] [✗] [Edit]
        ↓
 User klikne ✓
        ↓
@@ -323,150 +317,153 @@ POST /api/actions/{id}/approve
        ↓
 planner.resume(action_id, approved=True)
        ↓
-Skill execute → audit log → tool_result
+Skill execute → tool_result → loop nastavlja
        ↓
-Loop nastavlja
+pending_actions.delete(action_id)
 ```
-
-**Pauza može biti sekunde ili dani — Claude ne primjećuje, API je stateless.**
 
 ---
 
-## 12. Audit log — SQLite
-
-```sql
-CREATE TABLE agent_actions (
-    id              TEXT PRIMARY KEY,           -- UUID
-    ticket_id       TEXT NOT NULL,
-    playbook_id     TEXT NOT NULL,
-    skill_name      TEXT NOT NULL,
-    skill_input     TEXT NOT NULL,              -- JSON
-    status          TEXT NOT NULL,              -- proposed/executed/rejected/shadow/failed
-    mode            TEXT NOT NULL,
-    execution_result TEXT,                      -- JSON
-    error           TEXT,
-    proposed_at     TEXT NOT NULL,
-    decided_at      TEXT,
-    decided_by      TEXT,                       -- 'auto' | user_email
-    -- za HITL resume:
-    messages_blob   TEXT,                       -- JSON cijela povijest
-    tool_use_id     TEXT,
-    iteration       INTEGER
-);
-
-CREATE INDEX idx_actions_status ON agent_actions(status);
-CREATE INDEX idx_actions_ticket ON agent_actions(ticket_id);
-```
-
-**Pravilo**: audit row se piše **prije** execute.
-
----
-
-## 13. Order of implementation
+## 13. Order of implementation — DEMO
 
 ```
-DAY 1   Read Claude Agent SDK docs (1h)
-        → odluči: SDK ili custom loop?
-        
-        Implementiraj jira_get_history + jira_add_label
-        Unit testovi
+DAY 1   Read Claude Agent SDK docs (1h) → odluka SDK ili custom
+        Implementiraj jira_get_history (read-only, najsigurniji)
+        Unit test
         
 DAY 2   jira_add_public_comment + jira_transition
         validator.py
+        pending_actions.py (4-polja tablica)
         
-DAY 3   agent_actions.py (SQLite + CRUD)
-        SDK setup ili početak custom planner-a
+DAY 3   planner.py — agent loop (SDK ili custom)
+        Mode gates (shadow/assisted)
+        Resume mehanizam
+        Manual test: skill se pokrene s mock Anthropic
         
-DAY 4   planner.py finalize (SDK ili custom)
-        Mode gates + resume mehanizam
-        Integration testovi
-        
-DAY 5   backend/routers/actions.py
+DAY 4   backend/routers/actions.py
         Hook u core/agent_runner.py
-        Update test playbook s allowed_skills (ako nije)
+        Test playbook ima allowed_skills (već ima)
         
-DAY 6-7 frontend ActionApproval.tsx
-        E2E manual test (full flow s HITL)
-
-DAY 8   Buffer
+DAY 5   frontend ActionApproval.tsx
+        Integration u Agent Feed
+        
+DAY 6   E2E manual test s test playbook-om
+        Polish za demo (loading states, error messages)
 ```
 
-**Total: 7 dana (5-6 s SDK, 7-8 custom).**
+**Total: 5-6 dana.**
 
 ---
 
-## 14. Acceptance kriteriji
+## 14. Acceptance kriteriji — DEMO
 
 **Skills (Day 1-2)**
-- [ ] 5+ skills u REGISTRY
-- [ ] Sve JSON schemas valid (Anthropic SDK ne baca grešku)
+- [ ] 3 skills u REGISTRY (`get_history`, `add_public_comment`, `transition`)
+- [ ] JSON schemas valid
 
-**Validator + Audit (Day 3)**
+**Validator + state (Day 2-3)**
 - [ ] Validator odbija unknown / not-allowed
-- [ ] Audit log INSERT/SELECT radi
+- [ ] `pending_actions` save/load/delete radi
 
-**Planner (Day 4)**
-- [ ] E2E s mock Anthropic pass
+**Planner (Day 3)**
 - [ ] Shadow mode logira, ne izvršava
 - [ ] Assisted mode pauzira write skills
-- [ ] Autonomous mode respektira `autonomous_resolve`
-- [ ] Resume nakon pauze nastavi correctly
+- [ ] Resume nakon ✓ nastavi correctly
+- [ ] `MAX_ITERATIONS = 10` ne dopušta runaway
 
-**UI + integration (Day 5-7)**
+**UI (Day 4-6)**
 - [ ] Pending actions vidljive u UI
-- [ ] Approve / Reject / Edit rade
-- [ ] Test playbook prolazi full flow
+- [ ] Approve gumb radi end-to-end
+- [ ] Reject gumb šalje Claude-u rejection
+- [ ] Test playbook prolazi full flow (shadow → assisted s approval)
 
 ---
 
-## 15. Failure modes
+## 15. Što NIJE u demo (odgođeno za produkciju)
+
+| Što | Kad |
+|---|---|
+| Full audit log (13 polja, history, analytics) | Kad ide u produkciju |
+| Migration produkcijskih playbookova | Postupno nakon demo-a |
+| Detaljne metrike / dashboard | Kad imamo volume |
+| Streaming responses | Optimizacija nakon demo-a |
+| Parallel tool execution | Kad treba |
+| MCP server exposure | Kad customer želi vlastitog agenta |
+| Hooks / subagents | Kad treba |
+| Rate limiting | Kad imamo realan volume |
+
+---
+
+## 16. Failure modes — najkritičnije za demo
 
 | Risk | Mitigation |
 |---|---|
-| Claude bira krivi tool | HITL gate za write + jasni descriptions |
-| Tool izvan allow-liste | Validator hard reject (frontmatter) |
+| Claude bira krivi tool | HITL gate + jasni descriptions |
+| Tool izvan allow-liste | Validator hard reject |
 | Infinite loop | `MAX_ITERATIONS = 10` |
-| Race condition (dupli approve) | `action_id` kao idempotency key |
 | Schema invalid | Anthropic SDK validira pre-call |
 | Skill crash | try/except → `SkillResult(ok=False)` |
-| API outage | Retry s backoff |
+| Demo dan: API outage | Pripremi snimku/screenshot kao backup |
 
 ---
 
-## 16. Što NIJE u scope-u
-
-- MCP server exposure
-- Bullet parsing iz markdown body-ja (Claude reads naturally)
-- Bullet-level safety constraints
-- ACE-style counter learning (Sprint 8+)
-- Multi-tenant
-- Migracija svih 122 playbookova (opt-in samo)
-- Parallel tool execution
-- Streaming responses
-
----
-
-## 17. Bottom line
+## 17. Demo scenario — što pokazuješ
 
 ```
-Što gradimo:
-  • Skills (Python klase) — name, description, schema, execute
-  • allowed_skills u YAML frontmatter (allow-list)
-  • Agent loop (probaj Claude Agent SDK prvo)
-  • Validator: allow-list + schema + mode
-  • HITL: skill.is_write + mode = pauza
-  • Audit log: agent_actions SQLite
+1. Otvori test ticket: "Trebam kopiju računa za parking, ref 3d5p7"
 
-Što NE gradimo:
-  • Bullet parser (Claude reads markdown naturally)
-  • Bullet-level safety (frontmatter + skill.is_write dovoljno)
-  • MCP server
-  • Custom message helpers (SDK ili plain Anthropic SDK)
+2. Mode = shadow
+   → Agent processira ticket
+   → UI prikaže "bi pozvao jira_add_public_comment, igeus_lookup, ..."
+   → Ništa se ne izvršava
+   → POKAŽEŠ: agent zna što napraviti, ali ne dira
 
-Postojeće NE ruši:
-  • classify / retrieve / draft ostaje
-  • 3-mode arhitektura ostaje
-  • 122 playbooka rade bez izmjena (opt-in migration)
+3. Switch na mode = assisted
+   → Agent processira isti ticket
+   → Read skill auto-executes (igeus_lookup)
+   → Write skill čeka odobrenje
+   → UI: "jira_add_public_comment, body='...', [✓] [✗]"
+   → POKAŽEŠ: HITL gate
 
-Total: 7 dana solo (5-6 s SDK).
+4. Klikneš ✓
+   → Akcija se izvrši (mock ili pravi Jira)
+   → Loop nastavlja (sljedeća akcija ili end_turn)
+   → POKAŽEŠ: end-to-end agent execution
+
+5. Pokaži pending_actions tablicu
+   → Vidi se record, briše se nakon execute
+   → POKAŽEŠ: state management za pauzu
+```
+
+**5-minutna demo. Pokazuje cijeli koncept.**
+
+---
+
+## 18. Bottom line
+
+```
+DEMO verzija (5-6 dana):
+  • 3 Skills (get_history, add_public_comment, transition)
+  • Validator (3 provjere)
+  • pending_actions tablica (4 polja)
+  • Planner loop (SDK ili custom)
+  • Frontend approval UI
+  • E2E s test playbook-om
+
+NE u demo-u:
+  • Full audit log
+  • Migration produkcijskih playbookova
+  • Ručno pisanje bullete-a
+  • Metrike / dashboard
+
+Postojeće ostaje:
+  • classify / retrieve / draft
+  • 3-mode arhitektura (shadow/assisted/autonomous)
+  • 122 playbooka rade bez izmjena
+
+Produkcijski upgrade nakon demo-a:
+  • pending_actions → agent_actions (full audit)
+  • Postupno opt-in migration playbookova
+  • Monitoring i metrike
+  • Auto-generation SKILLS.md
 ```
