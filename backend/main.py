@@ -33,6 +33,7 @@ import config
 from core.retrieval import discover_playbook_paths, load_playbook
 
 from .routers import (
+    actions,
     agent,
     categories,
     chat,
@@ -114,6 +115,7 @@ app.include_router(categories.router)
 app.include_router(discovery.router)
 app.include_router(tickets.router)
 app.include_router(agent.router)
+app.include_router(actions.router)
 app.include_router(chat.router)
 app.include_router(feedback.router)
 app.include_router(suggestions.router)

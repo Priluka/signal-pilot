@@ -221,6 +221,22 @@ def process_ticket(
         ticket_id, agent_config.effective_mode(top_pb_id)
     )
 
+    # ---- 4. Planner (Skills layer) ----
+    # Only runs if the matched playbook explicitly lists allowed_skills
+    # in its YAML frontmatter. Without that gate every legacy playbook
+    # would silently start triggering Claude tool_use calls.
+    allowed_skills = playbook.metadata.get("allowed_skills") or []
+    if allowed_skills:
+        try:
+            from core import planner
+
+            planner.run(ticket=ticket, playbook=playbook, draft_text=draft.draft)
+        except Exception as exc:  # noqa: BLE001
+            # Planner failure must NOT abort the rest of the agent
+            # session — classify/retrieve/draft already succeeded and
+            # the operator can still review the draft manually.
+            _record_error(ticket_id, "planner", exc)
+
 
 def _record_error(ticket_id: str, step: str, exc: Exception) -> None:
     with _batch_lock:
