@@ -45,5 +45,11 @@ CLASSIFIER_MAX_TOKENS: int = 256
 DRAFTER_MAX_TOKENS: int = 1500
 CHAT_MAX_TOKENS: int = int(os.environ.get("CHAT_MAX_TOKENS", "2000"))
 
+# Planner — agent loop that drives tool_use. Defaults to the drafter model
+# since it needs the same prose quality plus tool-selection reasoning.
+PLANNER_MODEL: str = os.environ.get("PLANNER_MODEL", DRAFTER_MODEL)
+PLANNER_MAX_TOKENS: int = int(os.environ.get("PLANNER_MAX_TOKENS", "2000"))
+PLANNER_MAX_ITERATIONS: int = int(os.environ.get("PLANNER_MAX_ITERATIONS", "10"))
+
 # Ticket sample for the Agent tab
 TICKET_SAMPLE_FILE: Path = TICKETS_DIR / "sample.jsonl"
