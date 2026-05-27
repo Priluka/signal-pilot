@@ -11,9 +11,11 @@
  * reject is a state change only.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Check,
   CheckCircle2,
+  ChevronRight,
   Lightbulb,
   ListFilter,
   X,
@@ -22,12 +24,13 @@ import {
 import { useToast } from '../components/Toast';
 import {
   acceptSuggestion,
+  getPlaybook,
   listPlaybooks,
   listSuggestions,
   rejectSuggestion,
 } from '../lib/api';
 import { invalidate } from '../lib/cache';
-import type { PlaybookSummary, SuggestionRecord } from '../lib/types';
+import type { PlaybookDetail, PlaybookSummary, SuggestionRecord } from '../lib/types';
 
 
 type Filter = 'all' | 'pending' | 'accepted' | 'rejected';
@@ -330,6 +333,7 @@ function PendingCard({
       <CardHeader
         kind={kind}
         isBullet={isBullet}
+        playbookId={suggestion.playbook_id}
         playbookTitle={playbookTitle ?? suggestion.playbook_id}
         section={suggestion.section}
         stepNumber={suggestion.step_number}
@@ -337,7 +341,8 @@ function PendingCard({
         timestamp={suggestion.timestamp}
       />
       <Diff suggestion={suggestion} />
-      <div className="flex items-center justify-end gap-2">
+      <ContextPanel suggestion={suggestion} />
+      <div className="flex items-center justify-end gap-2 mt-3">
         <button
           type="button"
           onClick={onReject}
@@ -378,6 +383,7 @@ function ResolvedCard({
       <CardHeader
         kind={kind}
         isBullet={isBullet}
+        playbookId={suggestion.playbook_id}
         playbookTitle={playbookTitle ?? suggestion.playbook_id}
         section={suggestion.section}
         stepNumber={suggestion.step_number}
@@ -385,6 +391,7 @@ function ResolvedCard({
         timestamp={suggestion.timestamp}
       />
       <Diff suggestion={suggestion} />
+      <ContextPanel suggestion={suggestion} />
       <StatusIndicator status={suggestion.status} />
     </article>
   );
@@ -398,6 +405,7 @@ function ResolvedCard({
 function CardHeader({
   kind,
   isBullet,
+  playbookId,
   playbookTitle,
   section,
   stepNumber,
@@ -406,6 +414,7 @@ function CardHeader({
 }: {
   kind: 'edit' | 'add' | 'remove';
   isBullet: boolean;
+  playbookId: string;
   playbookTitle: string;
   section: string;
   stepNumber: number | null;
@@ -417,9 +426,12 @@ function CardHeader({
     <header className="mb-3">
       <div className="flex items-start gap-2">
         <KindBadge kind={kind} isBullet={isBullet} />
-        <span className="text-[12px] font-medium text-ink leading-tight">
+        <Link
+          to={`/knowledge/${playbookId}`}
+          className="text-[12px] font-medium text-accent-fg hover:underline cursor-pointer leading-tight"
+        >
           {playbookTitle}
-        </span>
+        </Link>
       </div>
       <div className="text-[11px] font-mono text-ink-muted mt-1">
         {location} · {author} · {formatTimestamp(timestamp)}
@@ -484,6 +496,131 @@ function Diff({ suggestion }: { suggestion: SuggestionRecord }) {
       )}
     </div>
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// Context panel — surrounding playbook items, lazy-loaded on first expand
+// ---------------------------------------------------------------------------
+
+const _CONTEXT_SECTIONS = new Set(['when_applies', 'resolution_flow', 'resolution_step']);
+
+
+function ContextPanel({ suggestion }: { suggestion: SuggestionRecord }) {
+  const [open, setOpen] = useState(false);
+  const [playbook, setPlaybook] = useState<PlaybookDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const supported =
+    _CONTEXT_SECTIONS.has(suggestion.section) && suggestion.step_number != null;
+
+  function toggle() {
+    if (!open && !playbook) {
+      setLoading(true);
+      getPlaybook(suggestion.playbook_id)
+        .then(setPlaybook)
+        .catch(() => setPlaybook(null))
+        .finally(() => setLoading(false));
+    }
+    setOpen((v) => !v);
+  }
+
+  if (!supported) return null;
+
+  const items: string[] = playbook
+    ? suggestion.section === 'when_applies'
+      ? parseBulletDisplay(playbook.when_applies)
+      : playbook.resolution_steps
+    : [];
+  const isBullet = suggestion.section === 'when_applies';
+  const targetIdx = (suggestion.step_number ?? 1) - 1;
+
+  // 2 above + 2 below (5 lines total), clamped. Short lists show everything.
+  let start = 0;
+  let end = items.length;
+  if (items.length > 3) {
+    start = Math.max(0, targetIdx - 2);
+    end = Math.min(items.length, targetIdx + 3);
+  }
+  const slice = items.slice(start, end);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        className="text-[12px] text-ink-muted hover:text-ink-body cursor-pointer flex items-center gap-1 mt-2 transition-colors duration-150"
+      >
+        <ChevronRight
+          width={14}
+          height={14}
+          strokeWidth={1.75}
+          className={`transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
+        />
+        {open ? 'Hide context' : 'Show context'}
+      </button>
+
+      {open && (
+        <div className="mt-3 border border-line rounded-lg overflow-hidden text-[12px]">
+          {loading && (
+            <div className="px-4 py-2 text-ink-muted">Loading context…</div>
+          )}
+          {!loading && slice.length === 0 && (
+            <div className="px-4 py-2 text-ink-muted">
+              No context available for this section.
+            </div>
+          )}
+          {!loading &&
+            slice.map((text, i) => {
+              const originalIdx = start + i;
+              const isTarget = originalIdx === targetIdx;
+              const isLast = i === slice.length - 1;
+              const prefix = isBullet ? '•' : `${originalIdx + 1}.`;
+              if (isTarget) {
+                return (
+                  <div
+                    key={originalIdx}
+                    className={`px-4 py-2 font-mono bg-amber-50 dark:bg-amber-950/40 text-ink font-medium border-l-[3px] border-l-amber-400 dark:border-l-amber-500 ${
+                      isLast ? '' : 'border-b border-b-line-subtle'
+                    }`}
+                  >
+                    <span className="text-ink-muted mr-2 inline-block min-w-[1.5em]">
+                      {prefix}
+                    </span>
+                    {text}
+                  </div>
+                );
+              }
+              return (
+                <div
+                  key={originalIdx}
+                  className={`px-4 py-2 text-ink-body font-mono ${
+                    isLast ? '' : 'border-b border-line-subtle'
+                  }`}
+                >
+                  <span className="text-ink-muted mr-2 inline-block min-w-[1.5em]">
+                    {prefix}
+                  </span>
+                  {text}
+                </div>
+              );
+            })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/** Extract bullet display text from a markdown ``- foo`` block — same parser
+ *  the playbook viewer uses, kept local to avoid cross-page imports. */
+function parseBulletDisplay(md: string): string[] {
+  const out: string[] = [];
+  for (const line of md.split('\n')) {
+    const match = line.match(/^(\s*-\s+)(.*\S.*)$/);
+    if (match) out.push(match[2]);
+  }
+  return out;
 }
 
 
