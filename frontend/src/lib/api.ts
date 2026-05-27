@@ -13,6 +13,7 @@ import type {
   BatchStatus,
   CategoriesResponse,
   ChatDeltaEvent,
+  DiscoveryReport,
   ChatDoneEvent,
   ChatErrorEvent,
   ChatSessionDetail,
@@ -102,6 +103,10 @@ export function getPlaybook(id: string): Promise<PlaybookDetail> {
 
 export function getCategories(): Promise<CategoriesResponse> {
   return cachedFetch('categories', () => json<CategoriesResponse>('/categories'));
+}
+
+export function getDiscoveryReport(): Promise<DiscoveryReport> {
+  return json<DiscoveryReport>('/discovery/report');
 }
 
 export function getGraph(): Promise<GraphResponse> {

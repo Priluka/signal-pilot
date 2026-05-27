@@ -21,6 +21,8 @@ import {
   BookOpen,
   Bot,
   ChevronsUpDown,
+  Compass,
+  Home,
   Inbox,
   Lightbulb,
   MessageSquare,
@@ -198,10 +200,12 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto scrollbar-thin mt-1 -mx-2 px-2 space-y-px">
         <SectionHeading>Workspace</SectionHeading>
+        <NavRow to="/" label="Home" icon={Home} />
         <NavRow to="/knowledge" label="Playbooks" icon={BookOpen} count={playbooksCount} />
+        <NavRow to="/discovery" label="Discovery" icon={Compass} />
         <ChatNavRow />
         <NavRow to="/inbox" label="Inbox" icon={Inbox} count={inboxCount} />
-        <NavRow to="/activity-log" label="Activity Log" icon={Activity} />
+        <NavRow to="/activity-log" label="History" icon={Activity} />
 
         <SectionHeading>Review</SectionHeading>
         <NavRow

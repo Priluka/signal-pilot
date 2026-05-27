@@ -89,6 +89,56 @@ export interface CategoriesResponse {
   by_ticket_class: Record<string, CountedName[]>;
 }
 
+
+// --- Discovery report ------------------------------------------------------
+export interface DiscoveryCategoryEntry {
+  name: string;
+  count: number;
+  playbook_titles: string[];
+}
+
+export interface DiscoveryCountryEntry {
+  code: string;
+  count: number;
+}
+
+export interface DiscoveryROISummary {
+  baseline_hours: number;
+  agent_assist_hours: number;
+  autonomous_hours: number;
+}
+
+export interface DiscoveryGap {
+  category: string;
+  count: number;
+}
+
+export interface DiscoveryTopPlaybook {
+  id: string;
+  title: string;
+  cluster_size: number;
+}
+
+export interface DiscoveryQuality {
+  min: number | null;
+  max: number | null;
+  avg: number | null;
+  low_confidence_count: number;
+}
+
+export interface DiscoveryReport {
+  total_playbooks: number;
+  total_tickets_covered: number;
+  avg_confidence: number | null;
+  categories: DiscoveryCategoryEntry[];
+  countries: DiscoveryCountryEntry[];
+  languages: CountedName[];
+  roi_summary: DiscoveryROISummary;
+  gaps: DiscoveryGap[];
+  top_playbooks: DiscoveryTopPlaybook[];
+  quality: DiscoveryQuality;
+}
+
 export interface TicketSummary {
   key: string;
   summary: string;

@@ -4,7 +4,9 @@ import { Layout } from './components/Layout';
 import { ActivityLogPage } from './pages/ActivityLogPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { ChatPage } from './pages/ChatPage';
+import { DiscoveryPage } from './pages/DiscoveryPage';
 import { GraphPage } from './pages/GraphPage';
+import { HomePage } from './pages/HomePage';
 import { InboxPage } from './pages/InboxPage';
 import { KnowledgePage } from './pages/KnowledgePage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -16,9 +18,10 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={<Navigate to="/knowledge" replace />} />
+          <Route path="/" element={<HomePage />} />
           <Route path="/knowledge" element={<KnowledgePage />} />
           <Route path="/knowledge/:slug" element={<KnowledgePage />} />
+          <Route path="/discovery" element={<DiscoveryPage />} />
           <Route path="/graph" element={<GraphPage />} />
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/inbox" element={<InboxPage />} />
@@ -35,7 +38,7 @@ function App() {
           <Route path="/agents/deployed" element={<Navigate to="/agents" replace />} />
           <Route path="/agents/shadow" element={<Navigate to="/agents" replace />} />
           <Route path="/agents/performance" element={<Navigate to="/agents" replace />} />
-          <Route path="*" element={<Navigate to="/knowledge" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>
