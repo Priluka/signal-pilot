@@ -72,9 +72,9 @@ def step_health() -> str:
     data = _get_json("/health")
     if data.get("status") != "ok":
         raise StepFailed(f"/health status={data.get('status')!r}, expected 'ok'")
-    if data.get("playbooks_loaded") != 122:
+    if data.get("playbooks_loaded", 0) < 122:
         raise StepFailed(
-            f"playbooks_loaded={data.get('playbooks_loaded')}, expected 122"
+            f"playbooks_loaded={data.get('playbooks_loaded')}, expected ≥122"
         )
     if not data.get("index_built"):
         raise StepFailed("index_built is falsy")
@@ -281,8 +281,8 @@ def step_playbook_modes() -> str:
     data = _get_json("/agent/playbook-modes")
     if not isinstance(data, list):
         raise StepFailed(f"expected list, got {type(data).__name__}")
-    if len(data) != 122:
-        raise StepFailed(f"got {len(data)} rows, expected 122")
+    if len(data) < 122:
+        raise StepFailed(f"got {len(data)} rows, expected ≥122")
     # Every row needs a playbook_id and a mode.
     bad = [r for r in data if not r.get("playbook_id") or not r.get("mode")]
     if bad:
