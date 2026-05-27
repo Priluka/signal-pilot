@@ -14,6 +14,8 @@ import type {
   CategoriesResponse,
   ChatDeltaEvent,
   DiscoveryReport,
+  PendingAction,
+  PlannerResultOut,
   ChatDoneEvent,
   ChatErrorEvent,
   ChatSessionDetail,
@@ -259,6 +261,40 @@ export async function deleteAgentSession(ticketId: string): Promise<void> {
   );
   if (!res.ok) throw new Error(`${res.status} delete /agent/sessions/${ticketId}`);
 }
+
+// --- Agent skills (HITL approvals) -----------------------------------------
+export function listPendingActions(): Promise<PendingAction[]> {
+  return json<PendingAction[]>('/actions/pending');
+}
+
+export function listPendingActionsForTicket(
+  ticketId: string,
+): Promise<PendingAction[]> {
+  return json<PendingAction[]>(
+    `/actions/pending/${encodeURIComponent(ticketId)}`,
+  );
+}
+
+export function approveAction(
+  id: string,
+  editedInput?: Record<string, unknown>,
+): Promise<PlannerResultOut> {
+  return json<PlannerResultOut>(`/actions/${encodeURIComponent(id)}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ edited_input: editedInput ?? null }),
+  });
+}
+
+export function rejectAction(
+  id: string,
+  note?: string,
+): Promise<PlannerResultOut> {
+  return json<PlannerResultOut>(`/actions/${encodeURIComponent(id)}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note ?? null }),
+  });
+}
+
 
 // --- Feedback --------------------------------------------------------------
 export function submitFeedback(req: FeedbackRequest): Promise<FeedbackRecord> {

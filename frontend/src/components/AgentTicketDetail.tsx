@@ -31,6 +31,7 @@ import type {
 } from '../lib/types';
 import { useAgentMode } from '../lib/useAgentMode';
 
+import { ActionApproval } from './ActionApproval';
 import { AgentModeChip } from './AgentModeChip';
 import { AgentStatusPill } from './AgentStatusPill';
 import { DiffView } from './DiffView';
@@ -232,6 +233,8 @@ export function AgentTicketDetail({
                 }
               />
             )}
+
+            <ActionApproval ticketKey={ticket.key} />
 
             {session.draft && (
               <DraftSection

@@ -383,6 +383,27 @@ export interface SuggestionStats {
   total: number;
 }
 
+
+// --- Agent Skills (planner / HITL) ----------------------------------------
+export interface PendingAction {
+  id: string;
+  ticket_id: string;
+  playbook_id: string;
+  skill_name: string;
+  skill_input: Record<string, unknown>;
+  mode: string;
+  iteration: number;
+  created_at: string;
+}
+
+export interface PlannerResultOut {
+  status: 'done' | 'awaiting_approval' | 'failed' | 'max_iterations';
+  pending_action_id: string | null;
+  error: string | null;
+  iterations: number;
+  summary: string | null;
+}
+
 // Knowledge graph
 export interface GraphNode {
   id: string;
