@@ -244,6 +244,11 @@ export function AgentTicketDetail({
           ticket={ticket}
           status={status}
           processedMode={session?.processed_mode ?? null}
+          // Only show the Re-process link once a session exists. There's
+          // nothing to discard on a fresh Jira ticket — the empty-state
+          // panel below already has the primary "Process with agent"
+          // call to action.
+          onReprocess={session ? redo : null}
         />
 
         {/* Original message — quiet inset card right after the header so
@@ -344,17 +349,42 @@ function TicketHeader({
   ticket,
   status,
   processedMode,
+  onReprocess,
 }: {
   ticket: TicketDetail;
   status: AgentStatus;
   processedMode: 'shadow' | 'assisted' | 'autonomous' | null;
+  /** When present, header shows a small "Re-process" link. Confirmed
+   *  before firing because the action discards the current session
+   *  (classification, draft, pending actions) — audit history stays. */
+  onReprocess: (() => void) | null;
 }) {
+  function handleReprocess() {
+    const ok = window.confirm(
+      'Re-process this ticket?\n\n' +
+        'The current classification, draft, and any pending agent actions ' +
+        'will be discarded. The audit history is preserved. ' +
+        'A new Anthropic call will be made.',
+    );
+    if (ok && onReprocess) onReprocess();
+  }
+
   return (
     <section className="border-b border-line-subtle pb-5">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs font-mono text-ink-muted tabular-nums">{ticket.key}</span>
         <AgentStatusPill status={status} size="md" />
         {processedMode && <AgentModeChip mode={processedMode} size="sm" />}
+        {onReprocess && (
+          <button
+            type="button"
+            onClick={handleReprocess}
+            className="ml-auto text-[12px] text-ink-muted hover:text-accent-fg transition-colors duration-150"
+            title="Discard current session and run classify/retrieve/draft again"
+          >
+            Re-process
+          </button>
+        )}
       </div>
       <h2 className="mt-1 text-lg font-semibold text-ink tracking-tight leading-snug">
         {ticket.summary}
