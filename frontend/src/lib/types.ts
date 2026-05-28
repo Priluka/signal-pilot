@@ -407,6 +407,22 @@ export interface PlannerResultOut {
   summary: string | null;
 }
 
+export interface AuditEntry {
+  id: number;
+  ticket_id: string;
+  playbook_id: string;
+  skill_name: string;
+  skill_input: Record<string, unknown>;
+  outcome: 'approved' | 'rejected' | 'auto' | 'shadow';
+  ok: boolean;
+  result_data: Record<string, unknown> | null;
+  error: string | null;
+  decided_by: string | null;
+  mode: string;
+  iteration: number;
+  decided_at: string;
+}
+
 // Knowledge graph
 export interface GraphNode {
   id: string;

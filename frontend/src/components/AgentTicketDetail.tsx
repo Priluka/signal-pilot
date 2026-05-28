@@ -15,90 +15,36 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, ChevronRight, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 import {
+  approveAction,
   deleteAgentSession,
   getAgentSession,
+  listActionHistoryForTicket,
   listPendingActionsForTicket,
   postJiraComment,
   processJiraTicket,
+  rejectAction,
   submitFeedback,
 } from '../lib/api';
 import type {
   AgentSessionDetail,
   AgentStatus,
+  AuditEntry,
+  PendingAction,
   TicketDetail,
 } from '../lib/types';
 import { useAgentMode } from '../lib/useAgentMode';
 
-import { ActionApproval } from './ActionApproval';
 import { AgentModeChip } from './AgentModeChip';
 import { AgentStatusPill } from './AgentStatusPill';
-import { DiffView } from './DiffView';
+import { AgentTimeline } from './AgentTimeline';
+import { useToast } from './Toast';
 
 
 type FeedbackKind = 'approved' | 'edited' | 'rejected';
 export type TicketSource = 'local' | 'jira';
-
-
-// ---------------------------------------------------------------------------
-// Shared atoms
-// ---------------------------------------------------------------------------
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="text-[11px] font-medium uppercase tracking-wider text-ink-muted mb-3">
-      {children}
-    </div>
-  );
-}
-
-
-function PlannerStatusBanner({
-  status,
-  error,
-}: {
-  status: AgentSessionDetail['planner_status'] | null;
-  error: string | null;
-}) {
-  // No banner for the happy paths — done is silent, awaiting_approval
-  // is already represented by the ActionApproval panel itself.
-  if (!status || status === 'done' || status === 'awaiting_approval') return null;
-  const isFailure = status === 'failed' || status === 'max_iterations';
-  const label =
-    status === 'failed'
-      ? 'Agent loop failed'
-      : status === 'max_iterations'
-      ? 'Agent stopped — iteration cap reached'
-      : status;
-  return (
-    <section
-      className={`flex items-start gap-3 rounded-lg px-4 py-3 border ${
-        isFailure
-          ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800/60'
-          : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60'
-      }`}
-    >
-      <div className="flex-1">
-        <div
-          className={`text-[12px] font-semibold ${
-            isFailure
-              ? 'text-red-700 dark:text-red-300'
-              : 'text-amber-700 dark:text-amber-300'
-          }`}
-        >
-          {label}
-        </div>
-        {error && (
-          <div className="mt-1 text-[11px] font-mono text-ink-muted break-words">
-            {error}
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
 
 
 // ---------------------------------------------------------------------------
@@ -127,15 +73,21 @@ export function AgentTicketDetail({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [processError, setProcessError] = useState<string | null>(null);
-  // Pending-action count drives whether the Skills panel owns approval.
-  // When > 0 we hide the legacy Draft Reply section entirely so the
-  // operator only sees one approve/reject affordance.
-  const [pendingCount, setPendingCount] = useState(0);
+  // Pending actions + audit history power the unified timeline. Polled
+  // every 3s while mounted so a planner iteration that produces a new
+  // pending row surfaces without manual refresh.
+  const [pendingActions, setPendingActions] = useState<PendingAction[]>([]);
+  const [history, setHistory] = useState<AuditEntry[]>([]);
+  const [busyActionId, setBusyActionId] = useState<string | null>(null);
+  const toast = useToast();
 
-  const refreshPending = useCallback(() => {
+  const refreshTimeline = useCallback(() => {
     listPendingActionsForTicket(ticket.key)
-      .then((rows) => setPendingCount(rows.length))
-      .catch(() => setPendingCount(0));
+      .then(setPendingActions)
+      .catch(() => setPendingActions([]));
+    listActionHistoryForTicket(ticket.key)
+      .then(setHistory)
+      .catch(() => setHistory([]));
   }, [ticket.key]);
 
   useEffect(() => {
@@ -156,18 +108,53 @@ export function AgentTicketDetail({
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    refreshPending();
+    refreshTimeline();
+    const poll = setInterval(refreshTimeline, 3000);
     const handler = () => {
       refresh();
-      refreshPending();
+      refreshTimeline();
     };
     window.addEventListener('agent-sessions-changed', handler);
     return () => {
       cancelled = true;
+      clearInterval(poll);
       window.removeEventListener('agent-sessions-changed', handler);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket.key]);
+
+
+  async function handleApproveAction(id: string) {
+    setBusyActionId(id);
+    try {
+      const result = await approveAction(id);
+      toast.success(
+        result.status === 'done'
+          ? 'Skill executed · planner done'
+          : `Skill executed · ${result.status}`,
+      );
+      refreshTimeline();
+      refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusyActionId(null);
+    }
+  }
+
+  async function handleRejectAction(id: string) {
+    setBusyActionId(id);
+    try {
+      const result = await rejectAction(id, 'Operator rejected from inbox.');
+      toast.success(`Skill rejected · ${result.status}`);
+      refreshTimeline();
+      refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusyActionId(null);
+    }
+  }
 
   function refresh() {
     getAgentSession(ticket.key)
@@ -270,74 +257,7 @@ export function AgentTicketDetail({
 
         {!loading && session && (
           <>
-            <Timeline session={session} />
-            {session.classification && (
-              <ClassificationCard session={session} />
-            )}
-            {session.draft_playbook_id && session.retrieval && (
-              <PlaybookCard
-                playbookId={session.draft_playbook_id}
-                title={
-                  session.retrieval.hits.find(
-                    (h) => h.playbook_id === session.draft_playbook_id,
-                  )?.title ?? session.draft_playbook_id
-                }
-                description={
-                  session.retrieval.hits.find(
-                    (h) => h.playbook_id === session.draft_playbook_id,
-                  )?.description ?? ''
-                }
-                score={
-                  session.retrieval.hits.find(
-                    (h) => h.playbook_id === session.draft_playbook_id,
-                  )?.score ?? null
-                }
-              />
-            )}
-
-            <PlannerStatusBanner
-              status={session.planner_status ?? null}
-              error={session.planner_error ?? null}
-            />
-
-            <ActionApproval
-              ticketKey={ticket.key}
-              onPlannerResult={() => {
-                refreshPending();
-                refresh();
-              }}
-            />
-
-            {/* Legacy Draft Reply — hidden when the Skills panel above is
-                handling approval, so the operator doesn't see two
-                competing Approve buttons for the same outgoing comment. */}
-            {session.draft && pendingCount === 0 && (
-              <DraftSection
-                session={session}
-                editing={editing}
-                editedText={editedText}
-                onEditedTextChange={setEditedText}
-                onStartEdit={() => setEditing(true)}
-                onCancelEdit={() => {
-                  setEditing(false);
-                  setEditedText(session.draft?.draft ?? '');
-                }}
-                hasEdits={hasEdits}
-                postsToJira={postsToJira}
-                isActionable={isActionable}
-                isHistorical={isHistorical}
-                isAutoPosted={isAutoPosted}
-                submitting={submitting}
-                submitError={submitError}
-                onApprove={() => decide(hasEdits ? 'edited' : 'approved')}
-                onReject={() => decide('rejected')}
-                onRedo={redo}
-                jiraUrl={session.jira_browse_url ?? null}
-                ticketKey={ticket.key}
-              />
-            )}
-
-            {status === 'skipped' && (
+            {status === 'skipped' ? (
               <div className="border border-line bg-hover/60 rounded-lg px-4 py-3 text-sm text-ink-body">
                 Auto-close path — classifier marked this as{' '}
                 <code className="text-xs">{session.classification?.label}</code>.
@@ -350,6 +270,29 @@ export function AgentTicketDetail({
                   Re-process this ticket
                 </button>
               </div>
+            ) : (
+              <AgentTimeline
+                session={session}
+                pendingActions={pendingActions}
+                history={history}
+                busyActionId={busyActionId}
+                onApproveAction={handleApproveAction}
+                onRejectAction={handleRejectAction}
+                editing={editing}
+                editedText={editedText}
+                hasEdits={hasEdits}
+                submitting={submitting}
+                submitError={submitError}
+                isActionable={isActionable}
+                onStartEdit={() => setEditing(true)}
+                onCancelEdit={() => {
+                  setEditing(false);
+                  setEditedText(session.draft?.draft ?? '');
+                }}
+                onEditedTextChange={setEditedText}
+                onDraftApprove={() => decide(hasEdits ? 'edited' : 'approved')}
+                onDraftReject={() => decide('rejected')}
+              />
             )}
           </>
         )}
@@ -449,531 +392,15 @@ function OriginalMessage({ description }: { description: string }) {
 }
 
 
-// ---------------------------------------------------------------------------
-// Timeline
-// ---------------------------------------------------------------------------
-
-type TimelineStep = {
-  at: string | null;
-  label: string;
-  detail?: string;
-  state: 'done' | 'pending' | 'rejected';
-};
+// (Legacy Timeline / ClassificationCard / PlaybookCard / DraftSection /
+//  DecisionRow / DecisionBanner / AutoResolvedBanner / formatTime helpers
+//  were here — replaced by the single AgentTimeline component imported
+//  above. Kept the file shorter; behaviour preserved.)
 
 
-function Timeline({ session }: { session: AgentSessionDetail }) {
-  const steps: TimelineStep[] = [];
-  if (session.classified_at && session.classification) {
-    steps.push({
-      at: session.classified_at,
-      label: 'Classified',
-      detail: `${session.classification.label} (${session.classification.confidence.toFixed(2)})`,
-      state: 'done',
-    });
-  }
-  if (session.retrieved_at && session.retrieval) {
-    const top = session.retrieval.hits[0];
-    steps.push({
-      at: session.retrieved_at,
-      label: 'Retrieved',
-      detail: top
-        ? `${session.retrieval.hits.length} match${
-            session.retrieval.hits.length === 1 ? '' : 'es'
-          }, top: ${top.title.slice(0, 60)}${top.title.length > 60 ? '…' : ''}`
-        : 'no matches',
-      state: 'done',
-    });
-  }
-  if (session.drafted_at && session.draft) {
-    steps.push({
-      at: session.drafted_at,
-      label: 'Draft generated',
-      detail: `recommended: ${session.draft.recommended_action.replace(/_/g, ' ')}`,
-      state: 'done',
-    });
-  }
-  if (session.feedback_at && session.feedback_status) {
-    steps.push({
-      at: session.feedback_at,
-      label: `Reviewer ${session.feedback_status}`,
-      state: session.feedback_status === 'rejected' ? 'rejected' : 'done',
-    });
-  } else if (session.draft && !session.feedback_status) {
-    steps.push({
-      at: null,
-      label: 'Awaiting review',
-      state: 'pending',
-    });
-  }
-
-  if (steps.length === 0) return null;
-
-  return (
-    <section>
-      <SectionLabel>Processing timeline</SectionLabel>
-      <ol>
-        {steps.map((step, i) => {
-          const isLast = i === steps.length - 1;
-          const dotClass =
-            step.state === 'done'
-              ? 'bg-emerald-500'
-              : step.state === 'rejected'
-              ? 'bg-red-500'
-              : 'bg-line';
-          return (
-            <li key={i} className="flex items-start gap-3">
-              <span className="text-[11px] font-mono text-ink-muted w-20 shrink-0 text-right pt-1">
-                {step.at ? formatTime(step.at) : '—'}
-              </span>
-              <span className="flex flex-col items-center self-stretch">
-                <span
-                  className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${dotClass}`}
-                />
-                {!isLast && <span className="w-px flex-1 bg-line-subtle my-1" />}
-              </span>
-              <div className={isLast ? '' : 'pb-3'}>
-                <div className="text-[13px] font-medium text-ink leading-snug">
-                  {step.label}
-                </div>
-                {step.detail && (
-                  <div className="text-[12px] text-ink-body mt-0.5 leading-snug">
-                    {step.detail}
-                  </div>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-    </section>
-  );
-}
-
-
-// ---------------------------------------------------------------------------
-// Classification
-// ---------------------------------------------------------------------------
-
-function ClassificationCard({ session }: { session: AgentSessionDetail }) {
-  if (!session.classification) return null;
-  return (
-    <section>
-      <SectionLabel>Classification</SectionLabel>
-      <div className="border border-line rounded-lg p-4">
-        <div className="flex items-center gap-2">
-          <code className="font-mono text-[11px] bg-app border border-line rounded px-1.5 py-0.5 text-ink-body">
-            {session.classification.label}
-          </code>
-          <span className="text-[11px] text-ink-muted font-mono">
-            conf {session.classification.confidence.toFixed(2)}
-          </span>
-        </div>
-        {session.classification.reason && (
-          <p className="mt-2 text-[13px] text-ink-body leading-relaxed">
-            {session.classification.reason}
-          </p>
-        )}
-      </div>
-    </section>
-  );
-}
-
-
-// ---------------------------------------------------------------------------
-// Matched playbook
-// ---------------------------------------------------------------------------
-
-function PlaybookCard({
-  playbookId,
-  title,
-  description,
-  score,
-}: {
-  playbookId: string;
-  title: string;
-  description: string;
-  score: number | null;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const longDescription = description.length > 220;
-  return (
-    <section>
-      <SectionLabel>Matched playbook</SectionLabel>
-      <div className="border border-line rounded-lg p-4">
-        <div className="flex items-start justify-between gap-4">
-          <Link
-            to={`/knowledge/${playbookId}`}
-            className="text-[13px] font-semibold text-ink leading-snug hover:text-accent-fg transition-colors duration-150"
-          >
-            {title}
-          </Link>
-          {score != null && (
-            <span className="text-[11px] font-mono text-ink-muted shrink-0">
-              score {score.toFixed(2)}
-            </span>
-          )}
-        </div>
-        <div className="mt-0.5 text-[11px] font-mono text-ink-muted">{playbookId}</div>
-        {description && (
-          <>
-            <p
-              className={`mt-2 text-[13px] text-ink-body leading-relaxed ${
-                longDescription && !expanded ? 'line-clamp-3' : ''
-              }`}
-            >
-              {description}
-            </p>
-            {longDescription && (
-              <button
-                type="button"
-                onClick={() => setExpanded((v) => !v)}
-                className="mt-1 text-[12px] text-accent-fg hover:underline"
-              >
-                {expanded ? 'Show less' : 'Show more'}
-              </button>
-            )}
-          </>
-        )}
-      </div>
-    </section>
-  );
-}
-
-
-// ---------------------------------------------------------------------------
-// Draft + decision
-// ---------------------------------------------------------------------------
-
-interface DraftSectionProps {
-  session: AgentSessionDetail;
-  editing: boolean;
-  editedText: string;
-  onEditedTextChange: (v: string) => void;
-  onStartEdit: () => void;
-  onCancelEdit: () => void;
-  hasEdits: boolean;
-  postsToJira: boolean;
-  isActionable: boolean;
-  isHistorical: boolean;
-  isAutoPosted: boolean;
-  submitting: boolean;
-  submitError: string | null;
-  onApprove: () => void;
-  onReject: () => void;
-  onRedo: () => void;
-  jiraUrl: string | null;
-  ticketKey: string;
-}
-
-
-function DraftSection({
-  session,
-  editing,
-  editedText,
-  onEditedTextChange,
-  onStartEdit,
-  onCancelEdit,
-  hasEdits,
-  postsToJira,
-  isActionable,
-  isHistorical,
-  isAutoPosted,
-  submitting,
-  submitError,
-  onApprove,
-  onReject,
-  onRedo,
-  jiraUrl,
-  ticketKey,
-}: DraftSectionProps) {
-  if (!session.draft) return null;
-  const action = session.draft.recommended_action.replace(/_/g, ' ');
-  return (
-    <section>
-      <div className="flex items-center justify-between mb-3">
-        <SectionLabel>Draft reply</SectionLabel>
-        <div className="flex items-center gap-3 mb-3">
-          <span className="text-[11px] font-mono text-ink-muted">action: {action}</span>
-          {!editing && !isAutoPosted && !isHistorical && (
-            <button
-              type="button"
-              onClick={onStartEdit}
-              className="text-[12px] text-accent-fg hover:underline font-medium"
-            >
-              Edit
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Draft body card — slightly more padding than other cards. */}
-      <div className="border border-line rounded-lg p-5">
-        {!editing ? (
-          <div className="text-[13px] text-ink whitespace-pre-line leading-relaxed">
-            {editedText}
-          </div>
-        ) : (
-          <>
-            <textarea
-              value={editedText}
-              onChange={(e) => onEditedTextChange(e.target.value)}
-              rows={Math.max(8, Math.min(20, editedText.split('\n').length + 1))}
-              className="w-full px-3 py-2 text-[13px] bg-card border border-accent rounded-md font-sans focus:outline-none focus:ring-2 focus:ring-accent/20 resize-y leading-relaxed"
-            />
-            <div className="mt-2 flex items-center justify-between">
-              {hasEdits ? (
-                <details className="text-[11px] text-ink-muted">
-                  <summary className="cursor-pointer hover:text-ink-body">Show diff</summary>
-                  <div className="mt-2 p-2 bg-app border border-line-subtle rounded-md">
-                    <DiffView original={session.draft.draft} edited={editedText} />
-                  </div>
-                </details>
-              ) : (
-                <span />
-              )}
-              <button
-                type="button"
-                onClick={onCancelEdit}
-                className="text-[12px] text-ink-body rounded-md px-2.5 h-7 hover:bg-hover"
-              >
-                Cancel edits
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Playbook caveat — quiet contextual info, NOT a warning. */}
-      {session.draft.rationale && (
-        <p className="text-[12px] text-ink-muted italic leading-relaxed mt-3 px-1">
-          {session.draft.rationale}
-        </p>
-      )}
-
-      {/* Decision UX — exactly one of: action row, banner, or auto-resolved. */}
-      {isAutoPosted && (
-        <AutoResolvedBanner
-          postedAt={session.auto_posted_at!}
-          jiraUrl={jiraUrl}
-          ticketKey={ticketKey}
-        />
-      )}
-
-      {isActionable && (
-        <DecisionRow
-          hasEdits={hasEdits}
-          submitting={submitting}
-          submitError={submitError}
-          postsToJira={postsToJira}
-          onApprove={onApprove}
-          onEdit={onStartEdit}
-          onReject={onReject}
-          editing={editing}
-        />
-      )}
-
-      {isHistorical && (
-        <DecisionBanner
-          status={session.feedback_status as 'approved' | 'edited' | 'rejected'}
-          feedbackAt={session.feedback_at}
-          onRedo={onRedo}
-        />
-      )}
-    </section>
-  );
-}
-
-
-function DecisionRow({
-  hasEdits,
-  submitting,
-  submitError,
-  postsToJira,
-  editing,
-  onApprove,
-  onEdit,
-  onReject,
-}: {
-  hasEdits: boolean;
-  submitting: boolean;
-  submitError: string | null;
-  postsToJira: boolean;
-  editing: boolean;
-  onApprove: () => void;
-  onEdit: () => void;
-  onReject: () => void;
-}) {
-  const approveLabel = postsToJira
-    ? hasEdits
-      ? 'Approve & send edited'
-      : 'Approve & send'
-    : hasEdits
-    ? 'Approve & save edit'
-    : 'Approve';
-  return (
-    <div className="mt-4">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onReject}
-          disabled={submitting}
-          className="mr-auto inline-flex items-center px-4 h-9 text-[13px] font-medium bg-transparent border border-red-200 text-red-600 rounded-md hover:bg-red-50 dark:border-red-800/60 dark:text-red-400 dark:hover:bg-red-950/40 transition-colors duration-150 disabled:opacity-60"
-        >
-          Reject
-        </button>
-        {!editing && !hasEdits && (
-          <button
-            type="button"
-            onClick={onEdit}
-            disabled={submitting}
-            className="inline-flex items-center px-4 h-9 text-[13px] font-medium bg-app border border-line text-ink rounded-md hover:bg-hover transition-colors duration-150 disabled:opacity-60"
-          >
-            Edit
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onApprove}
-          disabled={submitting}
-          className="inline-flex items-center px-4 h-9 text-[13px] font-medium text-white bg-accent rounded-md hover:bg-accent-hover transition-colors duration-150 disabled:opacity-60"
-        >
-          {approveLabel}
-        </button>
-      </div>
-      {submitError && (
-        <p className="mt-2 text-right text-[11px] text-red-600 dark:text-red-400">{submitError}</p>
-      )}
-    </div>
-  );
-}
-
-
-function DecisionBanner({
-  status,
-  feedbackAt,
-  onRedo,
-}: {
-  status: 'approved' | 'edited' | 'rejected';
-  feedbackAt: string | null;
-  onRedo: () => void;
-}) {
-  const isRejected = status === 'rejected';
-  const tone = isRejected
-    ? 'bg-red-50 border-red-200 dark:bg-red-950/40 dark:border-red-800/60'
-    : 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800/60';
-  const textTone = isRejected
-    ? 'text-red-700 dark:text-red-300'
-    : 'text-emerald-700 dark:text-emerald-300';
-  const subTone = isRejected
-    ? 'text-red-400 dark:text-red-500'
-    : 'text-emerald-500 dark:text-emerald-500';
-  return (
-    <div className={`flex items-center justify-between border rounded-lg px-4 py-3 mt-4 ${tone}`}>
-      <span className="text-[13px]">
-        <span className={`font-medium ${textTone}`}>
-          Decision: {status === 'edited' ? 'approved (edited)' : status}
-        </span>
-        {feedbackAt && (
-          <span className={`ml-2 text-[12px] font-mono ${subTone}`}>
-            at {formatTime(feedbackAt)}
-          </span>
-        )}
-      </span>
-      <button
-        type="button"
-        onClick={onRedo}
-        className="text-[12px] text-accent-fg hover:underline font-medium"
-      >
-        Re-process this ticket
-      </button>
-    </div>
-  );
-}
-
-
-function AutoResolvedBanner({
-  postedAt,
-  jiraUrl,
-  ticketKey,
-}: {
-  postedAt: string;
-  jiraUrl: string | null;
-  ticketKey: string;
-}) {
-  return (
-    <div className="flex items-center justify-between border border-emerald-200 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/40 rounded-lg px-4 py-3 mt-4">
-      <div className="flex items-center gap-2 text-[13px] text-emerald-700 dark:text-emerald-300">
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="text-emerald-600 dark:text-emerald-400 shrink-0"
-        >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-        <span>
-          <span className="font-medium">Auto-resolved</span> — posted to Jira at{' '}
-          <span className="font-mono text-[12px]">{formatTimestampFull(postedAt)}</span>
-        </span>
-      </div>
-      {jiraUrl ? (
-        <a
-          href={jiraUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[12px] text-emerald-700 dark:text-emerald-300 hover:underline font-medium inline-flex items-center gap-1"
-        >
-          Open {ticketKey}
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-            <polyline points="15 3 21 3 21 9" />
-            <line x1="10" y1="14" x2="21" y2="3" />
-          </svg>
-        </a>
-      ) : (
-        <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">{ticketKey}</span>
-      )}
-    </div>
-  );
-}
-
-
-// ---------------------------------------------------------------------------
-// Date helpers
-// ---------------------------------------------------------------------------
-
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString(undefined, {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
-}
-
-
-function formatTimestampFull(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
-}
+// (Legacy ClassificationCard / PlaybookCard / DraftSection / DecisionRow /
+//  DecisionBanner / AutoResolvedBanner removed — AgentTimeline handles all
+//  detail-pane rendering now.)
 
 
 // ---------------------------------------------------------------------------

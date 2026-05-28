@@ -13,6 +13,7 @@ import type {
   BatchStatus,
   CategoriesResponse,
   ChatDeltaEvent,
+  AuditEntry,
   DiscoveryReport,
   PendingAction,
   PlannerResultOut,
@@ -311,6 +312,14 @@ export function rejectAction(
     method: 'POST',
     body: JSON.stringify({ note: note ?? null }),
   });
+}
+
+export function listActionHistoryForTicket(
+  ticketId: string,
+): Promise<AuditEntry[]> {
+  return json<AuditEntry[]>(
+    `/actions/history/${encodeURIComponent(ticketId)}`,
+  );
 }
 
 
