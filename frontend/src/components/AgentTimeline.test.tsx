@@ -242,6 +242,63 @@ describe('AgentTimeline', () => {
     expect(screen.getByText(/1 action executed/)).toBeInTheDocument();
   });
 
+  it('renders shadow audit rows distinctly — no "executed", gray dot', () => {
+    const session = makeSession({ planner_status: 'done' });
+    const history: AuditEntry[] = [
+      {
+        id: 7,
+        ticket_id: 'KAN-99',
+        playbook_id: 'pb-parking',
+        skill_name: 'jira_add_public_comment',
+        skill_input: { ticket_id: 'KAN-99', body: 'Hello' },
+        outcome: 'shadow',
+        ok: true,
+        result_data: null,
+        error: null,
+        decided_by: null,
+        mode: 'shadow',
+        iteration: 1,
+        decided_at: '2026-05-28T10:00:35Z',
+      },
+    ];
+    renderRouted(<AgentTimeline {...baseProps(session, { history })} />);
+    // The "executed" wording must be absent for shadow rows.
+    expect(
+      screen.getByText(/jira_add_public_comment · shadow — no effect/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/jira_add_public_comment executed/),
+    ).toBeNull();
+    // Agent finished summary must not count this shadow row as executed.
+    expect(screen.getByText(/0 actions executed/)).toBeInTheDocument();
+    expect(screen.getByText(/1 shadow/)).toBeInTheDocument();
+  });
+
+  it('marks auto-executed read skill as "executed (auto)"', () => {
+    const session = makeSession({ planner_status: 'done' });
+    const history: AuditEntry[] = [
+      {
+        id: 8,
+        ticket_id: 'KAN-99',
+        playbook_id: 'pb-parking',
+        skill_name: 'jira_get_history',
+        skill_input: { ticket_id: 'KAN-99' },
+        outcome: 'auto',
+        ok: true,
+        result_data: { comment_count: 3 },
+        error: null,
+        decided_by: null,
+        mode: 'assisted',
+        iteration: 1,
+        decided_at: '2026-05-28T10:00:30Z',
+      },
+    ];
+    renderRouted(<AgentTimeline {...baseProps(session, { history })} />);
+    expect(
+      screen.getByText(/jira_get_history executed \(auto\)/),
+    ).toBeInTheDocument();
+  });
+
   it('renders red Agent loop failed step when planner_status=failed', () => {
     const session = makeSession({
       planner_status: 'failed',

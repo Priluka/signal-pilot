@@ -327,16 +327,35 @@ function SkillsBranch(props: AgentTimelineProps) {
 
 
 function HistoryStep({ entry }: { entry: AuditEntry }) {
+  // Outcome semantics drive both the wording AND the dot colour:
+  //   shadow   → nothing actually happened; gray dot, "no effect"
+  //   rejected → operator refused; red dot
+  //   ok=false → real attempt, real failure; red dot
+  //   auto     → read in any mode, or autonomous-opt-in write; green
+  //   approved → operator OK'd, skill ran; green
+  // The previous render lumped shadow together with approved which
+  // misled the operator into believing the skill had executed.
+  const isShadow = entry.outcome === 'shadow';
   const isReject = entry.outcome === 'rejected';
   const isFail = !entry.ok && !isReject;
-  const state: DotState = isReject || isFail ? 'error' : 'done';
-  const icon: LucideIcon = isReject ? X : isFail ? X : Check;
-  const title = isReject
+  const state: DotState = isShadow
+    ? 'pending'
+    : isReject || isFail
+    ? 'error'
+    : 'done';
+  const icon: LucideIcon = isShadow ? Pencil : isReject || isFail ? X : Check;
+  const title = isShadow
+    ? `${entry.skill_name} · shadow — no effect`
+    : isReject
     ? `${entry.skill_name} rejected`
     : isFail
     ? `${entry.skill_name} failed`
+    : entry.outcome === 'auto'
+    ? `${entry.skill_name} executed (auto)`
     : `${entry.skill_name} executed`;
-  const subtitle = isReject
+  const subtitle = isShadow
+    ? 'Skill was not called — shadow mode logs the request only.'
+    : isReject
     ? entry.error || 'rejected by operator'
     : isFail
     ? entry.error || 'skill error'
@@ -468,14 +487,24 @@ function PlannerOutcomeStep({
     );
   }
   if (status === 'done') {
-    const executed = history.filter((h) => h.ok && h.outcome !== 'rejected').length;
+    // Shadow rows logged a "would call" but did not execute anything,
+    // so they don't belong in the executed count. We surface them as
+    // a third bucket so the summary matches what the operator saw
+    // step-by-step on the timeline.
+    const executed = history.filter(
+      (h) => h.ok && h.outcome !== 'rejected' && h.outcome !== 'shadow',
+    ).length;
     const rejected = history.filter((h) => h.outcome === 'rejected').length;
+    const shadow = history.filter((h) => h.outcome === 'shadow').length;
+    const parts = [`${executed} action${executed === 1 ? '' : 's'} executed`];
+    if (rejected > 0) parts.push(`${rejected} rejected`);
+    if (shadow > 0) parts.push(`${shadow} shadow`);
     return (
       <Step
         state="done"
         icon={CheckCircle2}
         title="Agent finished"
-        subtitle={`${executed} action${executed === 1 ? '' : 's'} executed · ${rejected} rejected`}
+        subtitle={parts.join(' · ')}
         timestamp={null}
         last
       />
