@@ -55,10 +55,28 @@ import { cachedFetch } from './cache';
 const API_BASE: string =
   (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000';
 
+// Operator bearer token from .env.local — paired with backend OPERATOR_TOKEN.
+// Empty / unset means dev-mode (backend also unauthenticated).
+const OPERATOR_TOKEN: string | undefined = (
+  import.meta.env.VITE_OPERATOR_TOKEN as string | undefined
+)?.trim();
+
+function _authHeader(): Record<string, string> {
+  return OPERATOR_TOKEN ? { Authorization: `Bearer ${OPERATOR_TOKEN}` } : {};
+}
+
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
+  // Merge order: caller's headers win over defaults, but auth always
+  // attaches because spreading init AFTER our header object would
+  // erase Authorization. Keep auth inside the final merged object.
+  const callerHeaders = (init?.headers as Record<string, string> | undefined) ?? {};
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ..._authHeader(),
+      ...callerHeaders,
+    },
   });
   if (!res.ok) {
     let detail = '';
