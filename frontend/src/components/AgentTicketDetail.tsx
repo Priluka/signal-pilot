@@ -13,13 +13,14 @@
  *   5. Matched playbook                                          — emphasised card with link
  *   6. Draft reply                                               — hero card + decision row OR decision banner
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, ChevronRight, Loader2 } from 'lucide-react';
 
 import {
   deleteAgentSession,
   getAgentSession,
+  listPendingActionsForTicket,
   postJiraComment,
   processJiraTicket,
   submitFeedback,
@@ -54,6 +55,52 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 
+function PlannerStatusBanner({
+  status,
+  error,
+}: {
+  status: AgentSessionDetail['planner_status'] | null;
+  error: string | null;
+}) {
+  // No banner for the happy paths — done is silent, awaiting_approval
+  // is already represented by the ActionApproval panel itself.
+  if (!status || status === 'done' || status === 'awaiting_approval') return null;
+  const isFailure = status === 'failed' || status === 'max_iterations';
+  const label =
+    status === 'failed'
+      ? 'Agent loop failed'
+      : status === 'max_iterations'
+      ? 'Agent stopped — iteration cap reached'
+      : status;
+  return (
+    <section
+      className={`flex items-start gap-3 rounded-lg px-4 py-3 border ${
+        isFailure
+          ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800/60'
+          : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60'
+      }`}
+    >
+      <div className="flex-1">
+        <div
+          className={`text-[12px] font-semibold ${
+            isFailure
+              ? 'text-red-700 dark:text-red-300'
+              : 'text-amber-700 dark:text-amber-300'
+          }`}
+        >
+          {label}
+        </div>
+        {error && (
+          <div className="mt-1 text-[11px] font-mono text-ink-muted break-words">
+            {error}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -80,6 +127,16 @@ export function AgentTicketDetail({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [processError, setProcessError] = useState<string | null>(null);
+  // Pending-action count drives whether the Skills panel owns approval.
+  // When > 0 we hide the legacy Draft Reply section entirely so the
+  // operator only sees one approve/reject affordance.
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const refreshPending = useCallback(() => {
+    listPendingActionsForTicket(ticket.key)
+      .then((rows) => setPendingCount(rows.length))
+      .catch(() => setPendingCount(0));
+  }, [ticket.key]);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,7 +156,11 @@ export function AgentTicketDetail({
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    const handler = () => refresh();
+    refreshPending();
+    const handler = () => {
+      refresh();
+      refreshPending();
+    };
     window.addEventListener('agent-sessions-changed', handler);
     return () => {
       cancelled = true;
@@ -234,9 +295,23 @@ export function AgentTicketDetail({
               />
             )}
 
-            <ActionApproval ticketKey={ticket.key} />
+            <PlannerStatusBanner
+              status={session.planner_status ?? null}
+              error={session.planner_error ?? null}
+            />
 
-            {session.draft && (
+            <ActionApproval
+              ticketKey={ticket.key}
+              onPlannerResult={() => {
+                refreshPending();
+                refresh();
+              }}
+            />
+
+            {/* Legacy Draft Reply — hidden when the Skills panel above is
+                handling approval, so the operator doesn't see two
+                competing Approve buttons for the same outgoing comment. */}
+            {session.draft && pendingCount === 0 && (
               <DraftSection
                 session={session}
                 editing={editing}

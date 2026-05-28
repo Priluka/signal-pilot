@@ -37,14 +37,22 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     drafted_at          TEXT,
     feedback_at         TEXT,
     auto_posted_at      TEXT,
-    processed_mode      TEXT
+    processed_mode      TEXT,
+    planner_status      TEXT,
+    planner_error       TEXT,
+    planner_updated_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_updated ON agent_sessions(updated_at);
 """
 
 
 # Columns added after v0.1. The migration loop adds them as TEXT if missing.
-_LATER_COLUMNS: tuple[str, ...] = ("processed_mode",)
+_LATER_COLUMNS: tuple[str, ...] = (
+    "processed_mode",
+    "planner_status",
+    "planner_error",
+    "planner_updated_at",
+)
 
 
 _TIMESTAMP_COLUMNS = (
@@ -81,6 +89,14 @@ class AgentSessionRecord:
     # ticket was handled under — relevant when the operator switches modes
     # frequently or sets per-playbook overrides.
     processed_mode: str | None = None
+    # Planner outcome — written by core.agent_runner after planner.run().
+    # status ∈ {done, awaiting_approval, failed, max_iterations}; error
+    # carries the exception detail when status='failed'. UI surfaces a
+    # banner whenever status is not 'done' so a silent loop failure
+    # can't hide.
+    planner_status: str | None = None
+    planner_error: str | None = None
+    planner_updated_at: str | None = None
 
 
 @contextmanager
@@ -135,6 +151,9 @@ def _row_to_record(row: sqlite3.Row) -> AgentSessionRecord:
         feedback_at=_row_get(row, "feedback_at"),
         auto_posted_at=_row_get(row, "auto_posted_at"),
         processed_mode=_row_get(row, "processed_mode"),
+        planner_status=_row_get(row, "planner_status"),
+        planner_error=_row_get(row, "planner_error"),
+        planner_updated_at=_row_get(row, "planner_updated_at"),
     )
 
 
@@ -353,6 +372,37 @@ def mark_processed_mode(
             "WHERE ticket_id = ?",
             (mode, now, ticket_id),
         )
+
+
+def mark_planner_status(
+    ticket_id: str,
+    status: str,
+    error: str | None = None,
+    db_path: Path = config.FEEDBACK_DB_PATH,
+) -> None:
+    """Record planner outcome on the agent_sessions row.
+
+    Called from core.agent_runner.process_ticket after planner.run() and
+    from the /actions/* endpoints after planner.resume(). Surfaces in the
+    UI banner — silent planner failures are no longer possible.
+    """
+    init_db(db_path)
+    now = _now()
+    _ensure_table(ticket_id, db_path)
+    with _connect(db_path) as conn:
+        _ensure_row(conn, ticket_id)
+        conn.execute(
+            "UPDATE agent_sessions "
+            "SET planner_status = ?, planner_error = ?, planner_updated_at = ?, "
+            "    updated_at = ? "
+            "WHERE ticket_id = ?",
+            (status, error, now, now, ticket_id),
+        )
+
+
+def _ensure_table(ticket_id: str, db_path: Path) -> None:
+    """Lazy init helper — same pattern as the existing upserts use."""
+    init_db(db_path)
 
 
 def mark_auto_posted(

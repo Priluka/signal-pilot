@@ -284,6 +284,12 @@ class AgentSessionDetail(BaseModel):
     # Convenience: lets the frontend render a 'Open in Jira' link without
     # having to fetch the connection separately. Populated from JIRA_URL.
     jira_browse_url: str | None = None
+    # Planner outcome — surfaces in the UI banner so silent planner
+    # failures (Anthropic outage, schema mismatch, etc.) can't hide.
+    # status ∈ {done, awaiting_approval, failed, max_iterations}.
+    planner_status: str | None = None
+    planner_error: str | None = None
+    planner_updated_at: str | None = None
 
 
 class AgentSessionSummary(BaseModel):

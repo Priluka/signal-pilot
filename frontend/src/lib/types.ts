@@ -263,6 +263,9 @@ export interface AgentSessionDetail {
   auto_posted_at?: string | null;
   processed_mode?: AgentMode | null;
   jira_browse_url?: string | null;
+  planner_status?: 'done' | 'awaiting_approval' | 'failed' | 'max_iterations' | null;
+  planner_error?: string | null;
+  planner_updated_at?: string | null;
 }
 
 export interface BatchStatus {

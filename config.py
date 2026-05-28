@@ -50,6 +50,13 @@ CHAT_MAX_TOKENS: int = int(os.environ.get("CHAT_MAX_TOKENS", "2000"))
 PLANNER_MODEL: str = os.environ.get("PLANNER_MODEL", DRAFTER_MODEL)
 PLANNER_MAX_TOKENS: int = int(os.environ.get("PLANNER_MAX_TOKENS", "2000"))
 PLANNER_MAX_ITERATIONS: int = int(os.environ.get("PLANNER_MAX_ITERATIONS", "10"))
+# Hard cap on successful write skills the planner will execute on one
+# ticket. Defense in depth on top of MAX_ITERATIONS — a confused model
+# can loop within the iteration budget; this stops grinding once the
+# primary action (usually one customer-facing comment) is done.
+PLANNER_MAX_WRITE_ACTIONS: int = int(
+    os.environ.get("PLANNER_MAX_WRITE_ACTIONS", "2")
+)
 
 # Ticket sample for the Agent tab
 TICKET_SAMPLE_FILE: Path = TICKETS_DIR / "sample.jsonl"

@@ -188,6 +188,9 @@ def _record_to_detail(r: agent_sessions.AgentSessionRecord) -> AgentSessionDetai
         auto_posted_at=r.auto_posted_at,
         processed_mode=r.processed_mode,
         jira_browse_url=jira_url,
+        planner_status=r.planner_status,
+        planner_error=r.planner_error,
+        planner_updated_at=r.planner_updated_at,
     )
 
 

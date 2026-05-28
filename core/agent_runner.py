@@ -46,6 +46,27 @@ _batch_state = BatchState()
 _batch_lock = threading.Lock()
 
 
+# Per-ticket lock map — funnels concurrent process_ticket() calls for
+# the SAME ticket id through one at a time. The inbox + /jira/process
+# can fire two requests on the same ticket near-simultaneously (e.g.
+# user clicks Re-process while a poll-refresh kicks in); without the
+# lock both runs would call clear_for_ticket and create separate
+# pending actions, doubling Anthropic spend and surfacing duplicate
+# approval cards. Tickets that aren't fighting just take their own
+# lock and pay no cost.
+_ticket_locks: dict[str, threading.Lock] = {}
+_ticket_locks_guard = threading.Lock()
+
+
+def _lock_for_ticket(ticket_id: str) -> threading.Lock:
+    with _ticket_locks_guard:
+        lock = _ticket_locks.get(ticket_id)
+        if lock is None:
+            lock = threading.Lock()
+            _ticket_locks[ticket_id] = lock
+        return lock
+
+
 def get_batch_status() -> dict[str, Any]:
     with _batch_lock:
         return {
@@ -115,11 +136,24 @@ def process_ticket(
 ) -> None:
     """Drive one ticket through classify → retrieve → draft. Each step writes
     to ``agent_sessions`` with its own timestamp. Catches per-ticket failures
-    so a single bad ticket can't stop the batch."""
+    so a single bad ticket can't stop the batch.
+
+    Serialized per ticket_id — concurrent calls for the same ticket wait
+    on a per-ticket lock so they don't race on planner state."""
     ticket_id = str(ticket.get("key") or "")
     if not ticket_id:
         return
 
+    with _lock_for_ticket(ticket_id):
+        _process_ticket_locked(ticket_id, ticket, playbooks, index)
+
+
+def _process_ticket_locked(
+    ticket_id: str,
+    ticket: dict[str, Any],
+    playbooks: list[Playbook],
+    index: PlaybookIndex,
+) -> None:
     existing = agent_sessions.get_session(ticket_id)
     if _session_is_complete(existing):
         return
@@ -230,12 +264,20 @@ def process_ticket(
         try:
             from core import planner
 
-            planner.run(ticket=ticket, playbook=playbook, draft_text=draft.draft)
+            result = planner.run(
+                ticket=ticket, playbook=playbook, draft_text=draft.draft
+            )
+            agent_sessions.mark_planner_status(
+                ticket_id, result.status, result.error
+            )
         except Exception as exc:  # noqa: BLE001
             # Planner failure must NOT abort the rest of the agent
             # session — classify/retrieve/draft already succeeded and
             # the operator can still review the draft manually.
             _record_error(ticket_id, "planner", exc)
+            agent_sessions.mark_planner_status(
+                ticket_id, "failed", str(exc)
+            )
 
 
 def _record_error(ticket_id: str, step: str, exc: Exception) -> None:
