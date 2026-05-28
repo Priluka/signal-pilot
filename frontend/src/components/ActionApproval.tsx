@@ -44,6 +44,13 @@ export function ActionApproval({ ticketKey, onPlannerResult }: Props) {
 
   useEffect(() => {
     refresh();
+    // Poll every 3s so a planner that's iterating in the background
+    // (e.g. another iteration produced a new pending action right after
+    // the operator approved the previous one) surfaces without making
+    // them refresh the browser. Cheap — one tiny GET against an
+    // in-memory SQLite table.
+    const id = setInterval(refresh, 3000);
+    return () => clearInterval(id);
   }, [refresh]);
 
   async function handleApprove(action: PendingAction) {
