@@ -19,6 +19,15 @@ country_focus:
 - hr
 - other
 status: active
+# Skills enabled for this playbook — planner sees only these tools.
+# All writes are HITL (autonomous_resolve: false below).
+allowed_skills:
+  - jira_get_history
+  - jira_add_internal_comment
+  - jira_add_public_comment
+  - jira_transition
+agent_compatibility:
+  autonomous_resolve: false
 cluster_id: BS:end_user|no_value|dpk:c0
 project_key: BS
 cluster_size: 24
