@@ -28,9 +28,11 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Inbox,
   Loader2,
   MessageSquarePlus,
   Pencil,
+  Play,
   Search,
   Tag,
   X,
@@ -49,12 +51,21 @@ type LucideIcon = React.ComponentType<LucideProps>;
 
 
 export interface AgentTimelineProps {
-  session: AgentSessionDetail;
+  /** Null when this ticket has never been processed — the timeline
+   *  renders a single 'Ready to process' starter step instead of the
+   *  full Classified → Retrieved → Draft sequence. */
+  session: AgentSessionDetail | null;
+  source: 'local' | 'jira';
   pendingActions: PendingAction[];
   history: AuditEntry[];
   busyActionId: string | null;
   onApproveAction: (id: string) => void | Promise<void>;
   onRejectAction: (id: string) => void | Promise<void>;
+
+  // --- initial-process controls (no session yet) ---
+  processing: boolean;
+  processError: string | null;
+  onProcess: () => void;
 
   // --- legacy draft-decision controls (no-skills path) ---
   editing: boolean;
@@ -74,6 +85,27 @@ export interface AgentTimelineProps {
 export function AgentTimeline(props: AgentTimelineProps) {
   const { session } = props;
 
+  return (
+    <section>
+      <h2 className="text-[14px] font-semibold text-ink mb-4">
+        Agent execution timeline
+      </h2>
+      <ol className="relative">
+        {session ? (
+          <SessionBranches {...props} session={session} />
+        ) : (
+          <ReadyToProcessStep {...props} />
+        )}
+      </ol>
+    </section>
+  );
+}
+
+
+function SessionBranches(
+  props: AgentTimelineProps & { session: AgentSessionDetail },
+) {
+  const { session } = props;
   // Skills path engages when ANY skills-layer signal exists: an audit
   // row, a pending tool_use, or a planner_status the agent_runner
   // already persisted. Without these we render the legacy draft flow.
@@ -81,25 +113,73 @@ export function AgentTimeline(props: AgentTimelineProps) {
     props.pendingActions.length > 0 ||
     props.history.length > 0 ||
     !!session.planner_status;
-
   return (
-    <section>
-      <h2 className="text-[14px] font-semibold text-ink mb-4">
-        Agent execution timeline
-      </h2>
-      <ol className="relative">
-        {/* Steps render themselves; the connector line piece is drawn
-            inside each step except the last so it terminates cleanly. */}
-        <ClassifiedStep session={session} />
-        <RetrievedStep session={session} />
-        <DraftStep session={session} />
-        {skillsActive ? (
-          <SkillsBranch {...props} />
-        ) : (
-          <LegacyBranch {...props} />
-        )}
-      </ol>
-    </section>
+    <>
+      <ClassifiedStep session={session} />
+      <RetrievedStep session={session} />
+      <DraftStep session={session} />
+      {skillsActive ? <SkillsBranch {...props} /> : <LegacyBranch {...props} />}
+    </>
+  );
+}
+
+
+// ===========================================================================
+// Starter step — no session yet
+// ===========================================================================
+
+
+function ReadyToProcessStep(props: AgentTimelineProps) {
+  // Local-source tickets are queued by the background batch runner; the
+  // operator can't kick them off ad hoc the same way Jira's on-demand
+  // /jira/process endpoint allows. We surface the right copy + the
+  // right (or no) call-to-action accordingly.
+  const isJira = props.source === 'jira';
+  return (
+    <Step
+      state="pending"
+      icon={isJira ? Play : Inbox}
+      title={isJira ? 'Ready to process' : 'Queued for batch'}
+      timestamp={null}
+      forceExpanded
+      last
+      expandedContent={
+        <div className="space-y-3">
+          <p className="text-[13px] text-ink-body">
+            {isJira
+              ? "This ticket hasn't been processed yet. Click below to run classify → retrieve → draft (and the planner, if the matched playbook has skills enabled)."
+              : "The background agent batch hasn't reached this ticket yet — it'll appear here once classify/retrieve/draft finishes."}
+          </p>
+          {isJira && (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={props.onProcess}
+                disabled={props.processing}
+                className="inline-flex items-center gap-1.5 px-4 h-9 text-[13px] font-medium text-white bg-accent rounded-md hover:bg-accent-hover transition-colors duration-150 disabled:opacity-60"
+              >
+                {props.processing ? (
+                  <>
+                    <Loader2 width={13} height={13} className="animate-spin" />
+                    Working…
+                  </>
+                ) : (
+                  <>
+                    <Play width={13} height={13} strokeWidth={2} />
+                    Process with agent
+                  </>
+                )}
+              </button>
+              {props.processError && (
+                <span className="text-[11px] text-red-600 dark:text-red-400 break-words">
+                  {props.processError}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      }
+    />
   );
 }
 

@@ -80,18 +80,22 @@ function makeSession(
 
 
 function baseProps(
-  session: AgentSessionDetail,
+  session: AgentSessionDetail | null,
   overrides: Partial<AgentTimelineProps> = {},
 ): AgentTimelineProps {
   return {
     session,
+    source: 'jira',
     pendingActions: [],
     history: [],
     busyActionId: null,
     onApproveAction: vi.fn(),
     onRejectAction: vi.fn(),
+    processing: false,
+    processError: null,
+    onProcess: vi.fn(),
     editing: false,
-    editedText: session.draft?.draft ?? '',
+    editedText: session?.draft?.draft ?? '',
     hasEdits: false,
     submitting: false,
     submitError: null,
@@ -116,6 +120,29 @@ function renderRouted(node: React.ReactElement) {
 // ---------------------------------------------------------------------------
 
 describe('AgentTimeline', () => {
+  it('renders Ready-to-process step when session is null on Jira source', () => {
+    const onProcess = vi.fn();
+    renderRouted(
+      <AgentTimeline
+        {...baseProps(null, { source: 'jira', onProcess })}
+      />,
+    );
+    expect(screen.getByText('Ready to process')).toBeInTheDocument();
+    const btn = screen.getByRole('button', { name: /process with agent/i });
+    fireEvent.click(btn);
+    expect(onProcess).toHaveBeenCalled();
+  });
+
+  it('renders Queued-for-batch step without button on local source', () => {
+    renderRouted(
+      <AgentTimeline {...baseProps(null, { source: 'local' })} />,
+    );
+    expect(screen.getByText('Queued for batch')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /process with agent/i }),
+    ).toBeNull();
+  });
+
   it('renders Classified / Retrieved / Draft for a basic session', () => {
     const session = makeSession();
     renderRouted(<AgentTimeline {...baseProps(session)} />);
