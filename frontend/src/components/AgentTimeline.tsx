@@ -430,8 +430,7 @@ function LegacyBranch(props: AgentTimelineProps) {
             ? 'Draft approved'
             : 'Draft rejected'
         }
-        subtitle={session.feedback_at ?? undefined}
-        timestamp={null}
+        timestamp={session.feedback_at ?? null}
         last
       />
     );
@@ -625,10 +624,16 @@ function Step({
 // ===========================================================================
 
 
+// All timeline timestamps render in Europe/Zagreb so the timeline reads
+// consistently regardless of the operator's browser timezone. Backend
+// writes UTC ISO; the conversion happens here at the edge.
+const TIMELINE_TIMEZONE = 'Europe/Zagreb';
+
 function formatTimestamp(iso: string): string {
   try {
     const d = new Date(iso);
-    return d.toLocaleTimeString(undefined, {
+    return d.toLocaleTimeString('en-GB', {
+      timeZone: TIMELINE_TIMEZONE,
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
