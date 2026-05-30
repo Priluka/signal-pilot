@@ -290,6 +290,16 @@ class AgentSessionDetail(BaseModel):
     planner_status: str | None = None
     planner_error: str | None = None
     planner_updated_at: str | None = None
+    # Which writer the runner picked at retrieve time: 'drafter' for the
+    # classic single-LLM reply, 'planner' for the tool_use skills loop.
+    # Mutually exclusive. NULL on legacy rows from before this field
+    # existed — the frontend falls back to the drafter timeline for those.
+    routing: str | None = None
+    # First crashed step + the exception message. The frontend renders
+    # these as a red error node in the timeline; without persistence a
+    # refresh would lose them and the operator would see a stuck spinner.
+    error_step: str | None = None
+    error_message: str | None = None
 
 
 class AgentSessionSummary(BaseModel):
@@ -399,6 +409,8 @@ class ChatSessionDetail(ChatSessionSummary):
     cited_ids: list[str] = Field(default_factory=list)
     citation_index: list[CitationEntry] = Field(default_factory=list)
     error_message: str | None = None
+    # Agentic-chat replay: empty for legacy text-only sessions.
+    events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # --- Feedback --------------------------------------------------------------

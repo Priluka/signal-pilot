@@ -10,6 +10,7 @@ import type {
   AgentMetrics,
   AgentSessionDetail,
   AgentSessionSummary,
+  AgentStepEvent,
   BatchStatus,
   CategoriesResponse,
   ChatDeltaEvent,
@@ -161,6 +162,73 @@ export function processJiraTicket(issueKey: string): Promise<AgentSessionDetail>
     `/jira/process/${encodeURIComponent(issueKey)}`,
     { method: 'POST' },
   );
+}
+
+
+/**
+ * SSE stream of agent processing milestones — one event per step
+ * (classified → retrieved → drafted → planner_*). The frontend feeds
+ * these into AgentTimeline so the operator watches the work happen
+ * live instead of staring at a spinner for 20 seconds.
+ *
+ * Resolves once the server has sent a ``done`` event (or surfaces
+ * ``error``). Caller passes ``onEvent`` to receive each step as it
+ * arrives. AbortController support so navigating away cancels the
+ * connection cleanly.
+ */
+export async function streamProcessJiraTicket(
+  issueKey: string,
+  onEvent: (event: AgentStepEvent) => void,
+  opts: { signal?: AbortSignal } = {},
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/jira/process/${encodeURIComponent(issueKey)}/stream`,
+    {
+      method: 'POST',
+      headers: { ..._authHeader() },
+      signal: opts.signal,
+    },
+  );
+  if (!res.ok || !res.body) {
+    const txt = await res.text().catch(() => res.statusText);
+    throw new Error(`${res.status} stream: ${txt}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // SSE frames are separated by blank lines. Split, keep the trailing
+    // incomplete frame in the buffer for the next chunk.
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+    for (const frame of frames) {
+      const parsed = _parseSseFrame(frame);
+      if (parsed) onEvent(parsed);
+    }
+  }
+}
+
+
+function _parseSseFrame(frame: string): AgentStepEvent | null {
+  let eventName = 'message';
+  const dataLines: string[] = [];
+  for (const line of frame.split('\n')) {
+    if (line.startsWith('event:')) {
+      eventName = line.slice('event:'.length).trim();
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice('data:'.length).trim());
+    }
+  }
+  if (dataLines.length === 0) return null;
+  try {
+    const data = JSON.parse(dataLines.join('\n'));
+    return { type: eventName, ...data } as AgentStepEvent;
+  } catch {
+    return null;
+  }
 }
 
 export function postJiraComment(req: JiraCommentRequest): Promise<JiraCommentResponse> {
@@ -375,11 +443,36 @@ export async function deleteChatSession(id: number): Promise<void> {
 }
 
 // --- Chat (SSE) ------------------------------------------------------------
+export interface ChatSkillExecutingEvent {
+  skill: string;
+  params: Record<string, unknown>;
+  /** Anthropic tool_use id — same value lands in the matching executed
+   *  event so the timeline can fold both into one row. */
+  call_id?: string;
+}
+export interface ChatSkillExecutedEvent {
+  skill: string;
+  params: Record<string, unknown>;
+  call_id?: string;
+  ok: boolean;
+  result: Record<string, unknown> | null;
+  error: string | null;
+  elapsed_ms: number;
+}
+export interface ChatComposingEvent {
+  // empty payload — just a signal that token stream is about to start
+}
 export interface ChatStreamHandlers {
   onSources?: (e: ChatSourcesEvent) => void;
   onDelta?: (e: ChatDeltaEvent) => void;
   onDone?: (e: ChatDoneEvent) => void;
   onError?: (e: ChatErrorEvent) => void;
+  // New agentic-only events. Legacy /chat/answer never emits these, so
+  // the handlers are optional and the same component can consume either
+  // wire format.
+  onSkillExecuting?: (e: ChatSkillExecutingEvent) => void;
+  onSkillExecuted?: (e: ChatSkillExecutedEvent) => void;
+  onComposing?: (e: ChatComposingEvent) => void;
 }
 
 /**
@@ -400,6 +493,25 @@ export function streamChatAnswer(
 ): AbortController {
   return _consumeSSE(
     `${API_BASE}/chat/answer`,
+    { method: 'POST', body: JSON.stringify({ question, top_k }) },
+    handlers,
+  );
+}
+
+
+/** Agentic chat: same wire as /chat/answer plus skill_executing /
+ *  skill_executed / composing events. When the top retrieved playbook
+ *  has read-only skills, the backend drives a tool_use loop and emits
+ *  skill timeline events before streaming the final answer. Otherwise
+ *  it falls back to plain text streaming and the new event types
+ *  simply don't fire. Frontend uses the same handler shape for both. */
+export function streamAgenticChat(
+  question: string,
+  top_k: number,
+  handlers: ChatStreamHandlers,
+): AbortController {
+  return _consumeSSE(
+    `${API_BASE}/chat/agentic`,
     { method: 'POST', body: JSON.stringify({ question, top_k }) },
     handlers,
   );
@@ -503,6 +615,15 @@ function dispatchEvent(raw: string, handlers: ChatStreamHandlers): void {
       break;
     case 'error':
       handlers.onError?.(payload as ChatErrorEvent);
+      break;
+    case 'skill_executing':
+      handlers.onSkillExecuting?.(payload as ChatSkillExecutingEvent);
+      break;
+    case 'skill_executed':
+      handlers.onSkillExecuted?.(payload as ChatSkillExecutedEvent);
+      break;
+    case 'composing':
+      handlers.onComposing?.(payload as ChatComposingEvent);
       break;
   }
 }

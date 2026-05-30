@@ -40,3 +40,21 @@ def tools_for_playbook(allowed_skills: list[str]) -> list[dict[str, Any]]:
         if cls is not None:
             out.append(cls.to_tool_spec())
     return out
+
+
+def chat_tools_for_playbook(allowed_skills: list[str]) -> list[dict[str, Any]]:
+    """Read-only subset of ``tools_for_playbook`` — for the agentic chat.
+
+    The Knowledge-tab chat is the operator's research surface; the only
+    sensible skills here are lookups (Bmove / Graylog / SKIDATA / ParkIS
+    / Datatrans / jira_get_history). Letting Claude post a Jira comment
+    from a chat turn would be confusing at best and unsafe at worst —
+    the operator hasn't approved it through the inbox HITL flow.
+    """
+    out: list[dict[str, Any]] = []
+    for name in allowed_skills:
+        cls = REGISTRY.get(name)
+        if cls is None or cls.is_write:
+            continue
+        out.append(cls.to_tool_spec())
+    return out

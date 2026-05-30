@@ -15,6 +15,6 @@ from core.skills.registry import REGISTRY, get_skill, tools_for_playbook
 # Eagerly import every skill sub-package so the @register side effects
 # fire when ANY consumer touches core.skills.registry — without this the
 # planner sees an empty REGISTRY and silently exits at iteration 0.
-from core.skills import jira  # noqa: E402, F401  — side-effect: register skills
+from core.skills import external, jira  # noqa: E402, F401  — side-effect: register skills
 
 __all__ = ["Skill", "SkillResult", "REGISTRY", "get_skill", "tools_for_playbook"]

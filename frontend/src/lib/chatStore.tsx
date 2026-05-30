@@ -39,7 +39,12 @@ import {
   type ReactNode,
 } from 'react';
 
-import { attachToChatSession, getChatSession, streamChatAnswer } from './api';
+import {
+  attachToChatSession,
+  getChatSession,
+  streamAgenticChat,
+} from './api';
+import type { ChatEvent } from './types';
 import type { CitationIndexEntry, RetrievalHitOut } from './types';
 
 
@@ -57,6 +62,12 @@ interface ChatStore {
    * render each citation as a real numbered, clickable link even when
    * the model cited a playbook outside the retrieved top-K. */
   citationIndex: CitationIndexEntry[];
+  /** Agentic-chat skill execution timeline. Empty for legacy chat or
+   *  questions where Claude didn't call any tools. */
+  events: ChatEvent[];
+  /** True once the SSE 'composing' event arrives — signals to the UI
+   *  that the skills phase is over and prose is incoming. */
+  composing: boolean;
   status: ChatStatus;
   errorMsg: string | null;
   activeSessionId: number | null;
@@ -115,6 +126,50 @@ function writeString(key: string, value: string | null) {
 }
 
 
+/** Collapse paired skill_executing/skill_executed entries into a single
+ *  row per call. Backend persists every event the daemon emitted, so
+ *  events_json contains BOTH halves of every tool call. During live
+ *  streaming the SSE handlers below fold them in real time; on history
+ *  load we get the raw stream from the DB and have to do the same here
+ *  — otherwise switching between chats keeps appending stale "running"
+ *  rows next to their already-finished counterparts.
+ *
+ *  Match strategy: call_id (Anthropic-issued unique id) when present;
+ *  fall back to the most recent executing row of the same skill name
+ *  for legacy sessions that pre-date that field. Composing markers
+ *  pass through unchanged. */
+function dedupeEvents(events: ChatEvent[]): ChatEvent[] {
+  const out: ChatEvent[] = [];
+  for (const ev of events) {
+    if (ev.type !== 'skill_executed') {
+      out.push(ev);
+      continue;
+    }
+    let idx = -1;
+    if (ev.call_id) {
+      idx = out.findIndex(
+        (r) => r.type === 'skill_executing' && r.call_id === ev.call_id,
+      );
+    }
+    if (idx === -1) {
+      for (let i = out.length - 1; i >= 0; i--) {
+        const r = out[i];
+        if (r.type === 'skill_executing' && r.skill === ev.skill) {
+          idx = i;
+          break;
+        }
+      }
+    }
+    if (idx >= 0) {
+      out[idx] = ev;
+    } else {
+      out.push(ev);
+    }
+  }
+  return out;
+}
+
+
 export function ChatStoreProvider({ children }: { children: ReactNode }) {
   // Initial state from localStorage (lazy init so we read once per mount).
   const [question, setQuestionState] = useState<string>(() => readString(LS_DRAFT));
@@ -129,6 +184,8 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
   const [answer, setAnswer] = useState('');
   const [sources, setSources] = useState<RetrievalHitOut[]>([]);
   const [citationIndex, setCitationIndex] = useState<CitationIndexEntry[]>([]);
+  const [events, setEvents] = useState<ChatEvent[]>([]);
+  const [composing, setComposing] = useState(false);
   const [status, setStatus] = useState<ChatStatus>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
@@ -285,6 +342,13 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
         setAskedQuestion(s.question);
         setSources(s.hits);
         setCitationIndex(s.citation_index ?? []);
+        // Seed the skill timeline from any events already persisted.
+        // For an in-flight session the SSE tail will append more; for
+        // a finished one this is the full replay.
+        // Dedupe: backend stores both halves of every tool call. We
+        // collapse them here so the UI never renders a stale running
+        // row next to its already-finished counterpart.
+        setEvents(dedupeEvents((s.events ?? []) as ChatEvent[]));
         setTopKState(Math.max(1, Math.min(5, s.top_k)));
         setActiveSessionId(s.id);
 
@@ -297,8 +361,44 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
           resetStreamRefs();
           setAnswer('');
           setStatus('streaming');
+          // If the persisted events already include 'composing', the
+          // skills phase is past — start in composing state so the UI
+          // doesn't flash back to the skill timeline frontier.
+          setComposing(
+            (s.events ?? []).some((e: { type?: string }) => e.type === 'composing'),
+          );
           abortRef.current = attachToChatSession(s.id, {
             onSources: (e) => setSources(e.hits),
+            onSkillExecuting: (e) => {
+              setEvents((prev) => [
+                ...prev,
+                { type: 'skill_executing', skill: e.skill, params: e.params },
+              ]);
+            },
+            onSkillExecuted: (e) => {
+              setEvents((prev) => {
+                const idx = prev.findIndex(
+                  (ev) =>
+                    ev.type === 'skill_executing' &&
+                    ev.skill === e.skill &&
+                    JSON.stringify(ev.params) === JSON.stringify(e.params),
+                );
+                const finished: ChatEvent = {
+                  type: 'skill_executed',
+                  skill: e.skill,
+                  params: e.params,
+                  ok: e.ok,
+                  result: e.result,
+                  error: e.error,
+                  elapsed_ms: e.elapsed_ms,
+                };
+                if (idx === -1) return [...prev, finished];
+                const copy = prev.slice();
+                copy[idx] = finished;
+                return copy;
+              });
+            },
+            onComposing: () => setComposing(true),
             onDelta: (e) => {
               targetRef.current += e.text;
               startRAF();
@@ -321,9 +421,11 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
           setAnswerInstant(s.answer);
           setErrorMsg(s.error_message ?? 'unknown error');
           setStatus('error');
+          setComposing(true);
         } else {
           setAnswerInstant(s.answer);
           setStatus('done');
+          setComposing(true);
         }
       } catch {
         // Stale id — the row may have been deleted. Clear and continue.
@@ -347,37 +449,98 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
     setAskedQuestion(q);
     setSources([]);
     setCitationIndex([]);
+    setEvents([]);
+    setComposing(false);
     setErrorMsg(null);
     setActiveSessionId(null);
     writeString(LS_ACTIVE_ID, null);
     setStatus('streaming');
 
-    abortRef.current = streamChatAnswer(q, topK, {
+    abortRef.current = streamAgenticChat(q, topK, {
       onSources: (e) => {
         setSources(e.hits);
-        // Pin the session_id to localStorage immediately so a refresh
-        // mid-stream restores the row (with whatever partial answer the
-        // backend has checkpointed at that moment).
         if (e.session_id != null) {
           setActiveSessionId(e.session_id);
           writeString(LS_ACTIVE_ID, String(e.session_id));
         }
-        // Also drop the draft now — the question is in flight, no point
-        // restoring it as a half-written textarea after refresh.
         setQuestionState('');
         writeString(LS_DRAFT, null);
         window.dispatchEvent(new Event('chat-sessions-changed'));
+      },
+      onSkillExecuting: (e) => {
+        // Append an executing row immediately — UI shows a spinner
+        // until the matching skill_executed event swaps it for the
+        // result. Guard against the same call_id being emitted twice
+        // (can happen on SSE reconnect mid-stream) by skipping the
+        // append when a row with the same id already exists.
+        setEvents((prev) => {
+          if (e.call_id && prev.some(
+            (r) =>
+              (r.type === 'skill_executing' || r.type === 'skill_executed') &&
+              r.call_id === e.call_id,
+          )) {
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              type: 'skill_executing',
+              skill: e.skill,
+              params: e.params,
+              call_id: e.call_id,
+            },
+          ];
+        });
+      },
+      onSkillExecuted: (e) => {
+        // Fold the executing row into the executed row — there must
+        // only ever be ONE row per tool call. Match by call_id (the
+        // Anthropic tool_use id, identical in both events) when we
+        // have it; fall back to the most recent skill_executing for
+        // the same skill name on legacy events that lack a call_id.
+        setEvents((prev) => {
+          const finished: ChatEvent = {
+            type: 'skill_executed',
+            skill: e.skill,
+            params: e.params,
+            call_id: e.call_id,
+            ok: e.ok,
+            result: e.result,
+            error: e.error,
+            elapsed_ms: e.elapsed_ms,
+          };
+          let idx = -1;
+          if (e.call_id) {
+            idx = prev.findIndex(
+              (ev) => ev.type === 'skill_executing' && ev.call_id === e.call_id,
+            );
+          }
+          if (idx === -1) {
+            // Search backwards so we hit the most recent executing
+            // row for this skill name first — that's the one this
+            // executed event is closing.
+            for (let i = prev.length - 1; i >= 0; i--) {
+              const ev = prev[i];
+              if (ev.type === 'skill_executing' && ev.skill === e.skill) {
+                idx = i;
+                break;
+              }
+            }
+          }
+          if (idx === -1) return [...prev, finished];
+          const copy = prev.slice();
+          copy[idx] = finished;
+          return copy;
+        });
+      },
+      onComposing: () => {
+        setComposing(true);
       },
       onDelta: (e) => {
         targetRef.current += e.text;
         startRAF();
       },
       onDone: (e) => {
-        // Canonical final text — overrides any rounding error from
-        // accumulated deltas. RAF will keep draining until displayed
-        // catches up; status flips to 'done' now so the operator can
-        // start typing the next question without waiting for the type-
-        // out animation to finish.
         targetRef.current = e.answer;
         streamDoneRef.current = true;
         startRAF();
@@ -404,6 +567,8 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
     setAskedQuestion('');
     setSources([]);
     setCitationIndex([]);
+    setEvents([]);
+    setComposing(false);
     setErrorMsg(null);
     setActiveSessionId(null);
     writeString(LS_ACTIVE_ID, null);
@@ -411,7 +576,18 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadSession = useCallback(async (id: number) => {
+    // Abort any in-flight SSE stream from a previous chat — without
+    // this its handlers keep firing and append events to the NEW
+    // session's state, producing duplicate "running" rows.
     abortRef.current?.abort();
+    // Reset every streaming-derived field BEFORE fetching the new
+    // chat. Otherwise a fast switch shows stale tool calls and prose
+    // from the previous chat for a frame.
+    resetStreamRefs();
+    setAnswer('');
+    setEvents([]);
+    setComposing(false);
+    setErrorMsg(null);
     try {
       const s = await getChatSession(id);
       setQuestionState('');
@@ -420,6 +596,13 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
       setAnswerInstant(s.answer);
       setSources(s.hits);
       setCitationIndex(s.citation_index ?? []);
+      // Dedupe: backend stores both halves of every tool call. We
+      // collapse them here so the UI never renders a stale running
+      // row next to its already-finished counterpart.
+      setEvents(dedupeEvents((s.events ?? []) as ChatEvent[]));
+      // Historical sessions are already past composing; treat as such
+      // so the UI doesn't show the "writing response…" frontier.
+      setComposing(true);
       setTopKState(Math.max(1, Math.min(5, s.top_k)));
       setActiveSessionId(s.id);
       writeString(LS_ACTIVE_ID, String(s.id));
@@ -438,6 +621,8 @@ export function ChatStoreProvider({ children }: { children: ReactNode }) {
     answer,
     sources,
     citationIndex,
+    events,
+    composing,
     status,
     errorMsg,
     activeSessionId,

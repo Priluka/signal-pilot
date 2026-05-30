@@ -191,6 +191,9 @@ def _record_to_detail(r: agent_sessions.AgentSessionRecord) -> AgentSessionDetai
         planner_status=r.planner_status,
         planner_error=r.planner_error,
         planner_updated_at=r.planner_updated_at,
+        routing=r.routing,
+        error_step=r.error_step,
+        error_message=r.error_message,
     )
 
 
@@ -474,6 +477,13 @@ def get_agent_session(ticket_id: str) -> AgentSessionDetail | None:
 @router.delete("/sessions/{ticket_id}", status_code=204)
 def delete_agent_session(ticket_id: str) -> None:
     agent_sessions.delete_session(ticket_id)
+    # Defensive — planner.run() clears stale pending actions before
+    # starting, but if the operator deletes a session and never re-runs
+    # Process the orphaned rows would sit in pending_actions forever.
+    # Clearing here keeps the table tidy + the inbox UI clean.
+    from core import pending_actions
+
+    pending_actions.clear_for_ticket(ticket_id)
 
 
 # ---------------------------------------------------------------------------

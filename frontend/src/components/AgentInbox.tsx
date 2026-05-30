@@ -14,7 +14,6 @@ import type {
 } from '../lib/types';
 
 import { AgentModeChip } from './AgentModeChip';
-import { AgentStatusPill, statusPriority } from './AgentStatusPill';
 
 
 export interface InboxRow {
@@ -30,12 +29,23 @@ interface Props {
 }
 
 
+// Terminal states — no further operator action expected, so the row
+// drops to muted weight. Everything else (pending, in_progress,
+// needs_review, escalated) stays bold because it's still asking for
+// attention. ``feedback_status`` alone isn't enough: shadow-completed
+// and autonomous-resolved planner sessions never set it.
+const READ_STATES = new Set<AgentStatus>([
+  'auto_resolved',
+  'auto_drafted',
+  'skipped',
+  'approved',
+  'rejected',
+]);
+
+
 function isUnread(session: AgentSessionSummary | undefined): boolean {
-  // 'Read' means the operator (or the agent in autonomous) has acted —
-  // anything still awaiting a decision stays bold.
   if (!session) return true;
-  if (session.feedback_status) return false;
-  return true;
+  return !READ_STATES.has(session.derived_status);
 }
 
 
@@ -62,7 +72,6 @@ export function AgentInbox({ rows, loading, error }: Props) {
         <ul>
           {rows.map(({ ticket: t, session: s }) => {
             const isActive = ticketKey === t.key;
-            const status: AgentStatus = s?.derived_status ?? 'pending';
             const unread = isUnread(s);
             return (
               <li key={t.key}>
@@ -90,7 +99,6 @@ export function AgentInbox({ rows, loading, error }: Props) {
                         {t.key}
                       </span>
                     </span>
-                    <AgentStatusPill status={status} />
                   </div>
                   <div
                     className={`mt-1 text-[13px] leading-snug line-clamp-2 pl-3 ${
@@ -109,7 +117,14 @@ export function AgentInbox({ rows, loading, error }: Props) {
                     {s?.processed_mode && (
                       <AgentModeChip mode={s.processed_mode} size="sm" />
                     )}
-                    {s?.drafted_at && <span>{formatRelative(s.drafted_at)}</span>}
+                    {s && (
+                      // Drafter path has drafted_at; planner path doesn't,
+                      // so fall back to updated_at — that reflects the
+                      // most recent activity on the session row (planner
+                      // status change, audit append, etc.) and is the
+                      // honest "when was this processed" signal.
+                      <span>{formatRelative(s.drafted_at ?? s.updated_at)}</span>
+                    )}
                   </div>
                 </Link>
               </li>

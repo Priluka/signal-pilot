@@ -52,6 +52,21 @@ _LATER_COLUMNS: tuple[str, ...] = (
     "planner_status",
     "planner_error",
     "planner_updated_at",
+    # Which writer path the session is on, decided at retrieve time:
+    #   'drafter' → classic single-LLM draft, no skills layer
+    #   'planner' → tool_use loop produces the final reply via skills
+    # Mutually exclusive — never both. NULL only for pre-routing sessions
+    # (legacy rows written before this column existed).
+    "routing",
+    # First failed step + its exception message. Without these, a
+    # classify/retrieve/draft crash leaves the session row stuck in a
+    # half-populated state — frontend reads it on refresh, sees
+    # ``classified_at`` null, and renders 'Classifying…' spinner
+    # forever. Planner failures get persisted separately via
+    # ``planner_status='failed'`` + ``planner_error``; these two cover
+    # the earlier steps too.
+    "error_step",
+    "error_message",
 )
 
 
@@ -97,6 +112,17 @@ class AgentSessionRecord:
     planner_status: str | None = None
     planner_error: str | None = None
     planner_updated_at: str | None = None
+    # Writer path chosen at retrieve time: 'drafter' for classic single-LLM
+    # reply, 'planner' for tool_use loop with skills. Mutually exclusive —
+    # the runner picks one and never both. NULL on legacy rows from before
+    # this column existed.
+    routing: str | None = None
+    # First failed step ('classify' | 'retrieve' | 'draft' | 'planner')
+    # and the exception message. Persisted by the runner whenever a step
+    # crashes, so a page refresh after a credit-limit error still shows
+    # the failure inline instead of an infinite spinner.
+    error_step: str | None = None
+    error_message: str | None = None
 
 
 @contextmanager
@@ -154,6 +180,9 @@ def _row_to_record(row: sqlite3.Row) -> AgentSessionRecord:
         planner_status=_row_get(row, "planner_status"),
         planner_error=_row_get(row, "planner_error"),
         planner_updated_at=_row_get(row, "planner_updated_at"),
+        routing=_row_get(row, "routing"),
+        error_step=_row_get(row, "error_step"),
+        error_message=_row_get(row, "error_message"),
     )
 
 
@@ -218,11 +247,14 @@ def upsert_classification(
         _ensure_row(conn, ticket_id)
         # New classification invalidates everything downstream (retrieval was
         # tied to a previous classification, draft was tied to that retrieval).
+        # A successful classify also invalidates any persisted error from a
+        # prior attempt — fresh run starts clean.
         conn.execute(
             "UPDATE agent_sessions SET classification_json = ?, classified_at = ?, "
             "retrieval_json = NULL, retrieved_at = NULL, "
             "draft_json = NULL, draft_playbook_id = NULL, drafted_at = NULL, "
             "edited_text = NULL, feedback_status = NULL, feedback_at = NULL, "
+            "error_step = NULL, error_message = NULL, "
             "updated_at = ? WHERE ticket_id = ?",
             (json.dumps(classification), now, now, ticket_id),
         )
@@ -247,6 +279,7 @@ def upsert_retrieval(
             "UPDATE agent_sessions SET retrieval_json = ?, retrieved_at = ?, "
             "draft_json = NULL, draft_playbook_id = NULL, drafted_at = NULL, "
             "edited_text = NULL, feedback_status = NULL, feedback_at = NULL, "
+            "routing = NULL, "
             "updated_at = ? WHERE ticket_id = ?",
             (json.dumps(retrieval), now, now, ticket_id),
         )
@@ -339,6 +372,32 @@ def derive_status(record: AgentSessionRecord | None) -> str:
     label = classification.get("label")
     if label in ("internal_log", "spam_or_junk"):
         return "skipped"
+    # Planner path: drafter never runs, so record.draft is NULL. Derive
+    # the terminal state from planner_status — otherwise a shadow-
+    # completed or autonomous-resolved session falls through to
+    # 'in_progress' and the inbox keeps it bold forever.
+    if record.routing == "planner":
+        if record.planner_status == "done":
+            # 'auto_resolved' implies the agent ran autonomously. In
+            # assisted mode the planner only reaches 'done' AFTER the
+            # operator approved each queued write — calling that
+            # 'auto-sent' would lie about who decided. Shadow stays in
+            # the autonomous bucket because nothing was actually sent;
+            # it's a dry-run completion, not an operator decision.
+            if record.processed_mode == "assisted":
+                return "approved"
+            return "auto_resolved"
+        if record.planner_status == "awaiting_approval":
+            return "needs_review"
+        if record.planner_status in ("failed", "max_iterations"):
+            # No 'failed' pill in the operator UI; route through
+            # needs_review so the unread badge surfaces the regression
+            # instead of swallowing it as 'in_progress'.
+            return "needs_review"
+        if record.classification:
+            return "in_progress"
+        return "pending"
+    # Drafter path (or pre-routing legacy rows with a draft).
     if record.draft:
         action = record.draft.get("recommended_action")
         if action == "auto_close":
@@ -371,6 +430,83 @@ def mark_processed_mode(
             "UPDATE agent_sessions SET processed_mode = ?, updated_at = ? "
             "WHERE ticket_id = ?",
             (mode, now, ticket_id),
+        )
+
+
+def mark_top_playbook(
+    ticket_id: str,
+    playbook_id: str,
+    db_path: Path = config.FEEDBACK_DB_PATH,
+) -> None:
+    """Persist the matched (top-1) playbook ID at retrieve time.
+
+    The column is historically named ``draft_playbook_id`` because the
+    drafter used to be the only writer that knew the playbook. With the
+    drafter/planner routing split, BOTH paths need this set so the
+    ``Retrieved playbook`` timeline step renders after a refresh (the
+    SSE merge sets it during streaming, but the DB-backed refetch
+    overwrites that with NULL on the planner path).
+    """
+    init_db(db_path)
+    now = _now()
+    with _connect(db_path) as conn:
+        _ensure_row(conn, ticket_id)
+        conn.execute(
+            "UPDATE agent_sessions SET draft_playbook_id = ?, updated_at = ? "
+            "WHERE ticket_id = ?",
+            (playbook_id, now, ticket_id),
+        )
+
+
+def mark_error(
+    ticket_id: str,
+    step: str,
+    message: str,
+    db_path: Path = config.FEEDBACK_DB_PATH,
+) -> None:
+    """Persist a step failure on the session row.
+
+    Called from ``agent_runner._record_error`` whenever classify /
+    retrieve / draft / planner raises. The frontend reads these on
+    refresh and renders the same red error step it shows live via the
+    SSE error event — without persistence, a refresh after a crash
+    would render an infinite spinner instead of the actual failure.
+    """
+    if step not in ("classify", "retrieve", "draft", "planner"):
+        raise ValueError(f"invalid error step: {step!r}")
+    init_db(db_path)
+    now = _now()
+    with _connect(db_path) as conn:
+        _ensure_row(conn, ticket_id)
+        conn.execute(
+            "UPDATE agent_sessions SET error_step = ?, error_message = ?, "
+            "updated_at = ? WHERE ticket_id = ?",
+            (step, message, now, ticket_id),
+        )
+
+
+def mark_routing(
+    ticket_id: str,
+    routing: str,
+    db_path: Path = config.FEEDBACK_DB_PATH,
+) -> None:
+    """Persist which writer path this session is on ('drafter' or 'planner').
+
+    Decided once per session, immediately after retrieval picks the top
+    playbook. Used by the timeline to choose between the legacy draft step
+    and the planner-skills branch — without it, a page reload mid-stream
+    would render the wrong active-stage placeholder.
+    """
+    if routing not in ("drafter", "planner"):
+        raise ValueError(f"invalid routing: {routing!r}")
+    init_db(db_path)
+    now = _now()
+    with _connect(db_path) as conn:
+        _ensure_row(conn, ticket_id)
+        conn.execute(
+            "UPDATE agent_sessions SET routing = ?, updated_at = ? "
+            "WHERE ticket_id = ?",
+            (routing, now, ticket_id),
         )
 
 

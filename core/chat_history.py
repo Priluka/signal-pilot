@@ -32,7 +32,11 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     timestamp            TEXT NOT NULL,
     status               TEXT NOT NULL DEFAULT 'streaming'
                          CHECK (status IN ('streaming','done','error')),
-    error_message        TEXT
+    error_message        TEXT,
+    -- agentic chat: append-only list of skill_executing / skill_executed
+    -- events the daemon thread produces. Replay on reconnect rebuilds
+    -- the skill timeline the operator saw before the refresh.
+    events_json          TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_ts ON chat_sessions(timestamp);
@@ -51,10 +55,15 @@ class ChatSession:
     status: str = "done"
     error_message: str | None = None
     citation_index: list[dict[str, Any]] = None  # type: ignore[assignment]
+    # Append-only list for agentic chat: skill_executing / skill_executed
+    # entries. Empty for legacy text-only chat rows.
+    events: list[dict[str, Any]] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.citation_index is None:
             self.citation_index = []
+        if self.events is None:
+            self.events = []
 
 
 @contextmanager
@@ -102,6 +111,14 @@ def _migrate_if_needed(conn: sqlite3.Connection) -> None:
             "ALTER TABLE chat_sessions "
             "ADD COLUMN citation_index_json TEXT NOT NULL DEFAULT '[]'"
         )
+    if cols and "events_json" not in cols:
+        # Agentic chat: append-only list of skill execution events the
+        # daemon thread produced. Lets the SSE tail replay the skill
+        # timeline when a client reattaches after a refresh.
+        conn.execute(
+            "ALTER TABLE chat_sessions "
+            "ADD COLUMN events_json TEXT NOT NULL DEFAULT '[]'"
+        )
 
 
 def init_db(db_path: Path = config.FEEDBACK_DB_PATH) -> None:
@@ -127,6 +144,11 @@ def _row_to_session(row: sqlite3.Row) -> ChatSession:
         citation_index=(
             json.loads(row["citation_index_json"])
             if "citation_index_json" in keys
+            else []
+        ),
+        events=(
+            json.loads(row["events_json"])
+            if "events_json" in keys
             else []
         ),
     )
@@ -171,6 +193,7 @@ def update_session(
     citation_index: list[dict[str, Any]] | None = None,
     status: str | None = None,
     error_message: str | None = None,
+    events: list[dict[str, Any]] | None = None,
     db_path: Path = config.FEEDBACK_DB_PATH,
 ) -> ChatSession | None:
     """Patch an existing chat session. Any subset of fields may be omitted."""
@@ -194,6 +217,9 @@ def update_session(
     if error_message is not None:
         sets.append("error_message = ?")
         params.append(error_message)
+    if events is not None:
+        sets.append("events_json = ?")
+        params.append(json.dumps(events))
     if not sets:
         return get_session(session_id, db_path)
     params.append(session_id)

@@ -151,7 +151,6 @@ def test_run_pauses_on_write(playbook, ticket) -> str:
     result = planner.run(
         ticket=ticket,
         playbook=playbook,
-        draft_text="Test reply body.",
         client=client,
     )
     assert result.status == "awaiting_approval", (
@@ -251,7 +250,6 @@ def test_resume_approve_then_end(playbook, ticket) -> None:
         run_result = planner.run(
             ticket=ticket,
             playbook=playbook,
-            draft_text="Hello, here is your invoice.",
             client=client_run,
         )
         assert run_result.status == "awaiting_approval"
@@ -312,7 +310,6 @@ def test_validator_rejects_unknown_skill(playbook, ticket) -> None:
     result = planner.run(
         ticket=ticket,
         playbook=playbook,
-        draft_text=None,
         client=client,
     )
     assert result.status == "done", f"expected done, got {result.status}"
@@ -373,7 +370,6 @@ def test_multi_tool_turn_preserves_partial_results(playbook, ticket) -> None:
         run_result = planner.run(
             ticket=ticket,
             playbook=playbook,
-            draft_text="hi",
             client=client_run,
         )
         assert run_result.status == "awaiting_approval", (

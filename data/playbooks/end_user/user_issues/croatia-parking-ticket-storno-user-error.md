@@ -95,7 +95,7 @@ agent_compatibility:
   brainbox_skill: ready
   claude_skill: ready
   agent_assist: true
-  autonomous_resolve: false
+  autonomous_resolve: true
   note: Vendor coordination — needs human verification
   autonomous_resolve_max_safe_volume_pct: 0.2
   autonomous_resolve_narrow_use_case: Auto-send templated redirect reply when ticket metadata unambiguously identifies the
@@ -132,6 +132,17 @@ generated_by: praxis-v0.1
 created: '2026-05-15'
 updated: '2026-05-15'
 correction_count: 0
+# Skills enabled — reads auto-execute, writes are HITL.
+allowed_skills:
+  - graylog_search
+  - parkis_lookup
+  - skidata_session_lookup
+  - bmove_user_lookup
+  - datatrans_transaction
+  - jira_get_history
+  - jira_add_internal_comment
+  - jira_add_public_comment
+  - jira_transition
 ---
 
 # Croatian end-users requesting cancellation/refund of wrongly purchased parking tickets

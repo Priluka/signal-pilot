@@ -97,7 +97,7 @@ agent_compatibility:
   brainbox_skill: reference_only
   claude_skill: reference_only
   agent_assist: false
-  autonomous_resolve: false
+  autonomous_resolve: true
   note: Engineering backlog — not for runtime agents
   autonomous_resolve_max_safe_volume_pct: 0.15
   autonomous_resolve_narrow_use_case: Auto-verify backend purchase recording and send a 'purchase confirmed — please retry'
@@ -137,6 +137,17 @@ generated_by: praxis-v0.1
 created: '2026-05-15'
 updated: '2026-05-15'
 correction_count: 0
+# Skills enabled — reads auto-execute, writes are HITL.
+allowed_skills:
+  - graylog_search
+  - parkis_lookup
+  - skidata_session_lookup
+  - bmove_user_lookup
+  - datatrans_transaction
+  - jira_get_history
+  - jira_add_internal_comment
+  - jira_add_public_comment
+  - jira_transition
 ---
 
 # End-user unable to complete parking payment in Bmove app (Croatia)

@@ -95,7 +95,7 @@ agent_compatibility:
   brainbox_skill: reference_only
   claude_skill: reference_only
   agent_assist: false
-  autonomous_resolve: false
+  autonomous_resolve: true
   note: Admin/operator-only configuration change
   autonomous_resolve_max_safe_volume_pct: 0.1
   autonomous_resolve_narrow_use_case: Fully automated acknowledgement and completeness-check of incoming PoP form submissions,
@@ -127,6 +127,17 @@ generated_by: praxis-v0.1
 created: '2026-05-15'
 updated: '2026-05-15'
 correction_count: 0
+# Skills enabled — reads auto-execute, writes are HITL.
+allowed_skills:
+  - graylog_search
+  - parkis_lookup
+  - skidata_session_lookup
+  - bmove_user_lookup
+  - datatrans_transaction
+  - jira_get_history
+  - jira_add_internal_comment
+  - jira_add_public_comment
+  - jira_transition
 ---
 
 # Croatian B2B partner requests parking price/article changes via PoP form

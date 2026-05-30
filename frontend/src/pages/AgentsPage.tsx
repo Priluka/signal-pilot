@@ -717,7 +717,7 @@ function ModeSwitchModal({
           <button
             type="button"
             onClick={onConfirm}
-            className="bg-accent text-white hover:bg-accent-hover rounded-md px-4 h-8 text-[12px] font-medium transition-colors duration-150"
+            className="bg-btn-primary text-btn-primary-fg hover:bg-btn-primary-hover rounded-md px-4 h-8 text-[12px] font-medium transition-colors duration-150"
           >
             Switch to {to}
           </button>

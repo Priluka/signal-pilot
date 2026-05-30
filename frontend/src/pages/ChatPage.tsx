@@ -14,6 +14,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { ArrowUp, Sparkles } from 'lucide-react';
 
+import { AgenticSkillTimeline } from '../components/AgenticSkillTimeline';
 import { ChatAnswer, buildCitationMap } from '../components/ChatAnswer';
 import { ChatHistorySidebar } from '../components/ChatHistorySidebar';
 import { useChatStore } from '../lib/chatStore';
@@ -77,11 +78,20 @@ export function ChatPage() {
 
   const isStreaming = chat.status === 'streaming';
   // True when the model produced an answer but emitted zero inline
-  // citations — operator should treat the claims as ungrounded.
+  // citations — operator should treat the claims as ungrounded. In
+  // agentic chat the grounding lives in the skill timeline (real
+  // lookups against Bmove / Graylog / Datatrans), not in playbook
+  // citations, so suppress the warning whenever at least one skill
+  // returned a populated payload. Pure how-to questions answered
+  // from playbook prose alone still get checked the old way.
+  const skillsGroundedAnswer = chat.events.some(
+    (e) => e.type === 'skill_executed' && e.ok && e.result !== null,
+  );
   const noCitationsDetected =
     chat.status === 'done' &&
     chat.answer.length > 0 &&
     chat.sources.length > 0 &&
+    !skillsGroundedAnswer &&
     !/\[[a-z0-9][a-z0-9_-]+\]/.test(chat.answer);
 
   return (
@@ -97,13 +107,63 @@ export function ChatPage() {
           <div className="max-w-3xl mx-auto w-full px-6 pt-12 pb-6 min-w-0">
             {chat.askedQuestion ? (
               <section className="min-w-0">
+                {/* User question — right-aligned chat bubble. The sharp
+                    bottom-right corner reads like a tail pointing back
+                    to the operator who typed it. mb-10 gives the bubble
+                    breathing room before the skill timeline or answer
+                    header so the eye registers it as a distinct turn,
+                    not a sticky header on the response. */}
+                <div className="flex justify-end mb-10">
+                  <div className="bg-app rounded-2xl rounded-br-sm px-4 py-3 max-w-[70%] ml-auto text-[13px] text-ink whitespace-pre-wrap break-words">
+                    {chat.askedQuestion}
+                  </div>
+                </div>
+
+                {/* Citation count is sourced from citation_index entries
+                    the model actually anchored on — not the retrieved
+                    top-K — so it reflects how many distinct playbooks
+                    the answer genuinely leans on. Hallucinated ids
+                    (exists=false) are dropped to keep the count honest. */}
+                {(() => {
+                  const citedCount = chat.citationIndex.filter(
+                    (c) => c.exists,
+                  ).length;
+                  const hasToolCalls = chat.events.some(
+                    (e) => e.type === 'skill_executed',
+                  );
+                  return (
+                    <>
+                      <AgenticSkillTimeline
+                        events={chat.events}
+                        isStreaming={isStreaming}
+                        sessionId={chat.activeSessionId}
+                        citationCount={citedCount}
+                      />
+                      {/* No tools, but the answer cited playbooks →
+                          surface that as quiet context above the prose.
+                          Tools-path puts the citation count inside the
+                          collapsible strip instead. */}
+                      {!hasToolCalls && citedCount > 0 && (
+                        <div className="text-[11px] text-ink-muted mb-3">
+                          grounded in {citedCount} playbook
+                          {citedCount === 1 ? '' : 's'}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+
                 <div className="min-w-0 break-words">
                   {chat.answer ? (
                     <ChatAnswer text={chat.answer} citations={citations} />
                   ) : isStreaming ? (
                     <div className="text-[13px] text-ink-muted flex items-center gap-2">
                       <span className="inline-block w-2 h-2 rounded-full bg-accent animate-pulse" />
-                      Retrieving and drafting…
+                      {chat.events.length === 0
+                        ? 'Retrieving and drafting…'
+                        : chat.composing
+                        ? 'Composing response…'
+                        : 'Checking systems…'}
                     </div>
                   ) : null}
                   {chat.status === 'error' && (
@@ -149,7 +209,7 @@ export function ChatPage() {
                   type="submit"
                   disabled={!chat.question.trim() || isStreaming}
                   aria-label={isStreaming ? 'Streaming' : 'Send'}
-                  className="w-8 h-8 rounded-lg bg-accent hover:bg-accent-hover text-white flex items-center justify-center transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="w-8 h-8 rounded-lg bg-btn-primary hover:bg-btn-primary-hover text-btn-primary-fg flex items-center justify-center transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {isStreaming ? (
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-white/80 animate-pulse" />

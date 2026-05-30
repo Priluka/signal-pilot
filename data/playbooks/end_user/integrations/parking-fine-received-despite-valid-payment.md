@@ -20,14 +20,19 @@ country_focus:
 - other
 status: active
 # Skills enabled for this playbook — planner sees only these tools.
-# All writes are HITL (autonomous_resolve: false below).
+# Reads auto-execute; writes are HITL (autonomous_resolve: true below).
 allowed_skills:
+  - graylog_search
+  - parkis_lookup
+  - skidata_session_lookup
+  - bmove_user_lookup
+  - datatrans_transaction
   - jira_get_history
   - jira_add_internal_comment
   - jira_add_public_comment
   - jira_transition
 agent_compatibility:
-  autonomous_resolve: false
+  autonomous_resolve: true
 cluster_id: BS:end_user|no_value|dpk:c0
 project_key: BS
 cluster_size: 24
@@ -107,7 +112,7 @@ agent_compatibility:
   brainbox_skill: ready
   claude_skill: ready
   agent_assist: true
-  autonomous_resolve: false
+  autonomous_resolve: true
   note: Vendor coordination — needs human verification
   autonomous_resolve_max_safe_volume_pct: 0.1
   autonomous_resolve_narrow_use_case: Auto-acknowledge receipt of the parking fine photo and send a templated payment-confirmation

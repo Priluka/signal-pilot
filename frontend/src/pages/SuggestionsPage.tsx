@@ -355,7 +355,7 @@ function PendingCard({
           type="button"
           onClick={onAccept}
           disabled={busy}
-          className="bg-accent text-white hover:bg-accent-hover rounded-md px-3 h-8 text-[12px] font-medium transition-colors duration-150 disabled:opacity-60"
+          className="bg-btn-primary text-btn-primary-fg hover:bg-btn-primary-hover rounded-md px-3 h-8 text-[12px] font-medium transition-colors duration-150 disabled:opacity-60"
         >
           {busy ? 'Working…' : 'Accept'}
         </button>

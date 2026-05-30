@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Request
@@ -35,7 +35,42 @@ from fastapi.responses import StreamingResponse
 
 from core import chat_history
 from core.answerer import extract_all_cited_ids, extract_cited_ids, stream_answer
+import re
+
+from core.chat_agent import run_agentic_chat
 from core.embeddings import get_embedding_provider
+from core.skills.registry import REGISTRY
+
+
+# Tokens that look like a vehicle plate (Austrian W-55123K, Croatian
+# ZG-1234-AB, Slovak SK334AB, German DE-MH-5521, Italian I-AM442RR, …).
+# Permissive on purpose: starts with a letter, total length 5-12, may
+# contain dashes. A false positive (e.g. "FAQ-2025") triggers a few
+# read lookups that come back empty — cheaper than a false negative
+# which leaves the agent answering from playbook prose alone when the
+# operator clearly asked for concrete data on a specific record.
+_PLATE_TOKEN_RE = re.compile(r"\b[A-Z][A-Z0-9-]{4,11}\b")
+
+# Default read-only skill set the router injects whenever a plate is
+# detected, regardless of which playbook matched. Mirrors what every
+# skills-enabled playbook lists. Pure how-to questions don't trip
+# this path and continue to use whatever the matched playbook offers
+# (or fall back to the legacy answerer).
+_DEFAULT_PLATE_SKILLS = [
+    "bmove_user_lookup",
+    "skidata_session_lookup",
+    "graylog_search",
+    "parkis_lookup",
+    "datatrans_transaction",
+]
+
+
+def _looks_like_plate(question: str) -> bool:
+    """True iff the question contains a token that resembles a plate."""
+    for token in _PLATE_TOKEN_RE.findall(question.upper()):
+        if any(c.isdigit() for c in token) and any(c.isalpha() for c in token):
+            return True
+    return False
 from core.retrieval import (
     Playbook,
     PlaybookIndex,
@@ -174,6 +209,83 @@ def _run_generation_thread(
             pass
 
 
+# ---------------------------------------------------------------------------
+# Agentic generation thread — tool_use loop + token-by-token streaming
+# ---------------------------------------------------------------------------
+
+
+def _run_agentic_thread(
+    session_id: int,
+    question: str,
+    playbook: Playbook,
+    playbooks: list[Playbook],
+    index: PlaybookIndex | None,
+    extra_skills: list[str] | None = None,
+) -> None:
+    """Drive the chat_agent loop and stream output into the session row.
+
+    Mirrors ``_run_generation_thread`` for legacy chat but additionally
+    persists each skill_executing / skill_executed event so a reconnect
+    can replay the skill timeline. Daemon-style: keeps running to
+    completion regardless of whether any SSE tail is attached.
+    """
+    events: list[dict[str, Any]] = []
+    full_text = ""
+    last_checkpoint = 0
+
+    def _on_event(kind: str, payload: dict[str, Any]) -> None:
+        nonlocal full_text, last_checkpoint
+        if kind == "token":
+            full_text += payload.get("text", "")
+            if (len(full_text) - last_checkpoint) >= _CHECKPOINT_EVERY:
+                try:
+                    chat_history.update_session(session_id, answer=full_text)
+                except Exception:
+                    pass
+                last_checkpoint = len(full_text)
+            return
+        # composing / skill_executing / skill_executed — append to the
+        # events list and persist after every entry. These rows are small
+        # (a few hundred bytes each, with skill results compactly JSON'd)
+        # and there are typically 3-8 per query, so the write cost is
+        # negligible.
+        events.append({"type": kind, **payload})
+        try:
+            chat_history.update_session(session_id, events=events)
+        except Exception:
+            pass
+
+    try:
+        result = run_agentic_chat(
+            question=question,
+            playbook=playbook,
+            on_event=_on_event,
+            extra_skills=extra_skills,
+        )
+        # Final write — flush everything in one go so the SSE tail's
+        # next poll sees a consistent terminal state.
+        cited = extract_cited_ids(result.answer, playbooks)
+        citation_index = _build_citation_index(result.answer, playbooks, index)
+        chat_history.update_session(
+            session_id,
+            answer=result.answer,
+            cited_ids=cited,
+            citation_index=citation_index,
+            events=events,
+            status="done",
+        )
+    except Exception as exc:  # noqa: BLE001
+        try:
+            chat_history.update_session(
+                session_id,
+                events=events,
+                status="error",
+                error_message=str(exc),
+            )
+        except Exception:
+            pass
+
+
 # Track running threads so we never spawn a duplicate for the same session
 # (e.g. if the same session_id is attached twice via the GET stream).
 _running_threads: dict[int, threading.Thread] = {}
@@ -194,6 +306,32 @@ def _ensure_thread_for(
             target=_run_generation_thread,
             args=(session_id, question, playbooks, index),
             name=f"chat-gen-{session_id}",
+            daemon=True,
+        )
+        _running_threads[session_id] = thread
+        thread.start()
+
+
+def _ensure_agentic_thread_for(
+    session_id: int,
+    question: str,
+    playbook: Playbook,
+    playbooks: list[Playbook],
+    index: PlaybookIndex | None,
+    extra_skills: list[str] | None = None,
+) -> None:
+    """Agentic counterpart of ``_ensure_thread_for`` — single ``playbook``
+    drives tool selection, full ``playbooks`` list stays around for
+    citation resolution at the end. ``extra_skills`` augments the
+    playbook's ``allowed_skills`` (used for plate-forced agentic mode)."""
+    with _threads_lock:
+        existing = _running_threads.get(session_id)
+        if existing is not None and existing.is_alive():
+            return
+        thread = threading.Thread(
+            target=_run_agentic_thread,
+            args=(session_id, question, playbook, playbooks, index, extra_skills),
+            name=f"chat-agentic-{session_id}",
             daemon=True,
         )
         _running_threads[session_id] = thread
@@ -223,6 +361,18 @@ async def _sse_tail(session_id: int) -> AsyncIterator[str]:
         {"hits": session.hits, "session_id": session.id},
     )
 
+    # Agentic events captured before the client connected. Replay them
+    # in order so the operator sees the full skill timeline that
+    # produced the answer they're about to read. Legacy text-only chat
+    # rows have events=[] so this is a no-op for them.
+    last_event_idx = 0
+    for ev in session.events:
+        kind = ev.get("type", "")
+        payload = {k: v for k, v in ev.items() if k != "type"}
+        if kind:
+            yield _sse(kind, payload)
+        last_event_idx += 1
+
     last_pos = len(session.answer)
     if last_pos > 0:
         yield _sse("delta", {"text": session.answer})
@@ -251,6 +401,14 @@ async def _sse_tail(session_id: int) -> AsyncIterator[str]:
         if current is None:
             yield _sse("error", {"message": f"session {session_id} disappeared"})
             return
+        # New agentic events since last poll — emit in order.
+        if len(current.events) > last_event_idx:
+            for ev in current.events[last_event_idx:]:
+                kind = ev.get("type", "")
+                payload = {k: v for k, v in ev.items() if k != "type"}
+                if kind:
+                    yield _sse(kind, payload)
+            last_event_idx = len(current.events)
         if len(current.answer) > last_pos:
             yield _sse(
                 "delta",
@@ -337,6 +495,68 @@ def chat_answer(req: ChatRequest, request: Request) -> StreamingResponse:
     return _sse_response(_sse_tail(session.id))
 
 
+@router.post("/agentic")
+def chat_agentic(req: ChatRequest, request: Request) -> StreamingResponse:
+    """Agentic chat: if the top retrieved playbook has ``allowed_skills``,
+    drive the chat_agent loop (real lookups → grounded answer); otherwise
+    fall through to plain answerer.stream_answer. SSE schema is the
+    superset of ``/chat/answer`` plus ``composing`` / ``skill_executing``
+    / ``skill_executed`` events.
+    """
+    if not req.question.strip():
+        raise HTTPException(status_code=422, detail="Empty question")
+
+    index = get_playbook_index(request)
+    provider = get_embedding_provider()
+    query_vector = np.asarray(provider.embed(req.question), dtype=np.float32)
+    text_country = country_from_text(req.question)
+    hits = index.search(
+        query_vector,
+        country=text_country,
+        language=None if text_country else detect_language(req.question),
+        ticket_class=None,
+        country_boost=text_country,
+        keyword_boost_ids=keyword_boosted_playbooks(req.question),
+        top_k=req.top_k,
+    )
+    hit_payload = [_hit_to_out(h).model_dump() for h in hits]
+    session = chat_history.create_pending_session(
+        question=req.question,
+        hits=hit_payload,
+        top_k=req.top_k,
+    )
+
+    if not hits:
+        chat_history.update_session(session.id, status="done")
+        return _sse_response(_sse_tail(session.id))
+
+    playbooks = [h.playbook for h in hits]
+    top_playbook = playbooks[0]
+    allowed_skills = top_playbook.metadata.get("allowed_skills") or []
+    has_read_skills = any(
+        (cls := REGISTRY.get(name)) is not None and not cls.is_write
+        for name in allowed_skills
+    )
+    plate_in_question = _looks_like_plate(req.question)
+    # Routing:
+    #   • Plate in the question (e.g. "Provjeri W-55123K") → force
+    #     agentic with the default lookup set, regardless of which
+    #     playbook matched. The operator wants real data, not playbook
+    #     prose. Catches the case where retrieval lands on a playbook
+    #     without allowed_skills (PKC-misuse cluster, generic how-tos)
+    #     even though the question is clearly about a specific record.
+    #   • Otherwise: agentic when the matched playbook lists at least
+    #     one read skill; legacy text-only chat when it doesn't.
+    if plate_in_question or has_read_skills:
+        extra = list(_DEFAULT_PLATE_SKILLS) if plate_in_question else None
+        _ensure_agentic_thread_for(
+            session.id, req.question, top_playbook, playbooks, index, extra
+        )
+    else:
+        _ensure_thread_for(session.id, req.question, playbooks, index)
+    return _sse_response(_sse_tail(session.id))
+
+
 @router.get("/sessions/{session_id}/stream")
 def stream_session(session_id: int, request: Request) -> StreamingResponse:
     """Re-attach to an in-flight (or already finished) chat session.
@@ -400,6 +620,7 @@ def _session_detail(
         cited_ids=s.cited_ids,
         citation_index=[CitationEntry(**c) for c in citation_index],
         error_message=s.error_message,
+        events=s.events,
     )
 
 

@@ -643,7 +643,7 @@ function BatchInlineNotice({
         <button
           type="button"
           onClick={onTrigger}
-          className="inline-flex items-center h-6 px-2.5 rounded-md text-xs font-medium text-white bg-accent hover:bg-accent-hover transition-colors duration-150"
+          className="inline-flex items-center h-6 px-2.5 rounded-md text-xs font-medium bg-btn-primary text-btn-primary-fg hover:bg-btn-primary-hover transition-colors duration-150"
         >
           Process {remaining}
         </button>

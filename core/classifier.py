@@ -83,6 +83,24 @@ def classify_ticket(
     client=None,
 ) -> ClassificationResult:
     """Classify one ticket. Pass ``client`` to inject a mocked Anthropic client in tests."""
+    # Empty / very short descriptions are almost always a real user who
+    # just didn't write much — never an internal_log or spam. The LLM
+    # was prone to flipping these to internal_log on stability runs
+    # (EDGE-empty-desc, EDGE-one-word both classified as internal_log
+    # 5/5 times). Short-circuit to support_request without burning a
+    # round-trip: any real triage downstream still has the planner to
+    # decide whether enough info exists to act.
+    desc_len = len((description or "").strip())
+    if desc_len < 15:
+        return ClassificationResult(
+            label="support_request",
+            confidence=0.80,
+            reason=(
+                f"description too short ({desc_len} chars) — defaulting to "
+                "support_request without LLM call"
+            ),
+            raw_response="",
+        )
     if client is None:
         if not config.ANTHROPIC_API_KEY:
             raise RuntimeError("ANTHROPIC_API_KEY is not set")

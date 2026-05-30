@@ -266,6 +266,15 @@ export interface AgentSessionDetail {
   planner_status?: 'done' | 'awaiting_approval' | 'failed' | 'max_iterations' | null;
   planner_error?: string | null;
   planner_updated_at?: string | null;
+  /** Writer path picked at retrieve time. 'drafter' = classic single-LLM
+   *  reply, 'planner' = tool_use skills loop. Mutually exclusive; the
+   *  timeline branches on this rather than guessing from drafted_at. */
+  routing?: 'drafter' | 'planner' | null;
+  /** First crashed step persisted on the session row. Frontend renders
+   *  this as a red error node identical to the live SSE error event —
+   *  without it a refresh after a failure shows an infinite spinner. */
+  error_step?: 'classify' | 'retrieve' | 'draft' | 'planner' | null;
+  error_message?: string | null;
 }
 
 export interface BatchStatus {
@@ -407,6 +416,56 @@ export interface PlannerResultOut {
   summary: string | null;
 }
 
+// --- /jira/process/{key}/stream — SSE step events --------------------------
+export type AgentStepEvent =
+  | { type: 'started'; ticket_id: string; mode: string; at: string }
+  | {
+      type: 'classified';
+      label: string;
+      confidence: number;
+      reason: string;
+      at: string;
+    }
+  | { type: 'skipped'; reason: string }
+  | {
+      type: 'retrieved';
+      hits: RetrievalHitOut[];
+      detected_language: string | null;
+      detected_country: string | null;
+      // Writer chosen for the next stage. Null if no hits / playbook not
+      // loaded (no downstream writer will run).
+      routing: 'drafter' | 'planner' | null;
+      at: string;
+    }
+  | { type: 'no_hits' }
+  | {
+      type: 'drafted';
+      playbook_id: string;
+      playbook_title: string;
+      recommended_action: string;
+      draft: string;
+      rationale: string;
+      at: string;
+    }
+  | {
+      type: 'planner_started';
+      mode: string;
+      allowed_skills: string[];
+      playbook_id?: string;
+      playbook_title?: string;
+    }
+  | {
+      type: 'planner_done';
+      status: 'done' | 'awaiting_approval' | 'failed' | 'max_iterations';
+      summary: string | null;
+      error: string | null;
+      iterations: number;
+      pending_action_id: string | null;
+    }
+  | { type: 'error'; step: string; message: string }
+  | { type: 'done'; ticket_id: string };
+
+
 export interface AuditEntry {
   id: number;
   ticket_id: string;
@@ -498,7 +557,34 @@ export interface ChatSessionDetail extends ChatSessionSummary {
   cited_ids: string[];
   citation_index: CitationIndexEntry[];
   error_message: string | null;
+  /** Replay timeline for agentic chat sessions — empty for legacy
+   *  text-only chat. Each entry mirrors the SSE event payload. */
+  events?: ChatEvent[];
 }
+
+export type ChatEvent =
+  | {
+      type: 'skill_executing';
+      skill: string;
+      params: Record<string, unknown>;
+      /** Anthropic-issued tool_use id. Used as the join key between
+       *  executing/executed events so the timeline collapses to one
+       *  row per call regardless of params equality quirks. Optional
+       *  for backwards compat with sessions persisted before the id
+       *  was tracked. */
+      call_id?: string;
+    }
+  | {
+      type: 'skill_executed';
+      skill: string;
+      params: Record<string, unknown>;
+      call_id?: string;
+      ok: boolean;
+      result: Record<string, unknown> | null;
+      error: string | null;
+      elapsed_ms: number;
+    }
+  | { type: 'composing' };
 
 // Agent runtime config + per-playbook overrides
 export type AgentMode = 'shadow' | 'assisted' | 'autonomous';

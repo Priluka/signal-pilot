@@ -49,12 +49,20 @@ export default {
         'line-subtle': 'rgb(var(--c-line-subtle) / <alpha-value>)',
         'line-strong': 'rgb(var(--c-line-strong) / <alpha-value>)',
 
-        // Accent — indigo
+        // Accent — indigo. Reserved for links, sidebar active state,
+        // slider fills, focus rings. Primary CTAs use 'btn-primary'.
         accent: {
           DEFAULT: 'rgb(var(--c-accent) / <alpha-value>)',
           hover: 'rgb(var(--c-accent-hover) / <alpha-value>)',
           subtle: 'rgb(var(--c-accent-subtle) / <alpha-value>)',
           fg: 'rgb(var(--c-accent-fg) / <alpha-value>)',
+        },
+
+        // Primary CTA — near-black in light, near-white in dark.
+        'btn-primary': {
+          DEFAULT: 'rgb(var(--c-btn-primary) / <alpha-value>)',
+          fg: 'rgb(var(--c-btn-primary-fg) / <alpha-value>)',
+          hover: 'rgb(var(--c-btn-primary-hover) / <alpha-value>)',
         },
 
         // Text

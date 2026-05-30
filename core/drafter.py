@@ -166,6 +166,12 @@ def draft_reply(
     missing attachment instead of pretending to have seen it. When
     ``None`` we say "unknown" and the model is told not to claim
     visibility either way. ``client`` is injectable for tests.
+
+    Retries up to three times when the model emits malformed JSON —
+    Opus occasionally drops an unescaped quote inside the draft body
+    that even ``strict=False`` can't recover. A fresh call with the
+    same prompt usually yields valid output because of token-sampling
+    variance.
     """
     if client is None:
         if not config.ANTHROPIC_API_KEY:
@@ -181,15 +187,31 @@ def draft_reply(
         has_attachments=has_attachments,
     )
 
-    response = client.messages.create(
-        model=config.DRAFTER_MODEL,
-        max_tokens=config.DRAFTER_MAX_TOKENS,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-
-    raw_text = "".join(getattr(block, "text", "") for block in response.content).strip()
-    payload = _extract_json(raw_text)
+    raw_text: str = ""
+    payload: dict | None = None
+    last_parse_error: Exception | None = None
+    for _attempt in range(3):
+        response = client.messages.create(
+            model=config.DRAFTER_MODEL,
+            max_tokens=config.DRAFTER_MAX_TOKENS,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        raw_text = "".join(
+            getattr(block, "text", "") for block in response.content
+        ).strip()
+        try:
+            payload = _extract_json(raw_text)
+            break
+        except (json.JSONDecodeError, ValueError) as exc:
+            last_parse_error = exc
+            # No backoff — the issue is sampling variance, not server load.
+            # Just call again immediately.
+            continue
+    if payload is None:
+        raise ValueError(
+            f"Drafter returned malformed JSON after 3 attempts: {last_parse_error}"
+        )
     action = payload.get("recommended_action")
     if action not in _VALID_ACTIONS:
         raise ValueError(f"Drafter returned unknown action {action!r}")

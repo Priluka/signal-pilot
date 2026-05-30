@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import logging
 
+import json
+from typing import Iterator
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from httpx import HTTPStatusError
 
 from backend.deps import get_playbook_index, get_playbooks
@@ -71,6 +75,62 @@ def get_jira_ticket(issue_key: str) -> JiraTicketDetail:
     except HTTPStatusError as exc:
         raise _wrap_jira_error(exc) from exc
     return JiraTicketDetail(**row)
+
+
+def _sse(event: str, data: dict) -> str:
+    """Format a single SSE frame. Same wire shape as the chat endpoint."""
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+@router.post("/process/{issue_key}/stream")
+def process_jira_ticket_stream(
+    issue_key: str,
+    request: Request,
+    playbooks: list[Playbook] = Depends(get_playbooks),
+) -> StreamingResponse:
+    """Same pipeline as POST /process/{key}, but the response is an SSE
+    stream: one event per milestone (classified, retrieved, drafted,
+    planner_started, planner_done, done).
+
+    The frontend feeds these into the timeline one at a time so the
+    operator sees the work happening live instead of a 20-second wait
+    followed by a sudden full page. The non-streaming endpoint above
+    still exists for batch / scripted callers.
+    """
+    try:
+        ticket = jira_client.get_ticket(issue_key)
+    except JiraConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except HTTPStatusError as exc:
+        raise _wrap_jira_error(exc) from exc
+
+    index: PlaybookIndex = get_playbook_index(request)
+
+    def _gen() -> Iterator[str]:
+        try:
+            for event in agent_runner.process_ticket_streaming(
+                ticket, playbooks, index
+            ):
+                event_type = str(event.pop("type", "step"))
+                yield _sse(event_type, event)
+                if event_type == "done":
+                    # Post-stream side effects: mode-aware auto-post.
+                    # Mirror the blocking endpoint so behaviour matches.
+                    record = agent_sessions.get_session(issue_key)
+                    if record is not None:
+                        _maybe_auto_post(issue_key, record)
+        except Exception as exc:  # noqa: BLE001
+            yield _sse("error", {"step": "stream", "message": str(exc)})
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/process/{issue_key}", response_model=AgentSessionDetail)
@@ -136,6 +196,12 @@ def process_jira_ticket(
         auto_posted_at=record.auto_posted_at,
         processed_mode=record.processed_mode,
         jira_browse_url=jira_url,
+        planner_status=record.planner_status,
+        planner_error=record.planner_error,
+        planner_updated_at=record.planner_updated_at,
+        routing=record.routing,
+        error_step=record.error_step,
+        error_message=record.error_message,
     )
 
 

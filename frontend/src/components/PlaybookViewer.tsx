@@ -132,7 +132,7 @@ function AddItemForm({
           type="button"
           onClick={submit}
           disabled={submitting || !draft.trim()}
-          className="bg-accent text-white rounded-md px-3 h-7 text-[12px] font-medium hover:bg-accent-hover transition-colors duration-150 disabled:bg-line disabled:text-ink-muted"
+          className="bg-btn-primary text-btn-primary-fg rounded-md px-3 h-7 text-[12px] font-medium hover:bg-btn-primary-hover transition-colors duration-150 disabled:bg-line disabled:text-ink-muted"
         >
           {submitting ? 'Submitting…' : ctaLabel}
         </button>
@@ -341,7 +341,7 @@ function EditableRow({
           type="button"
           onClick={submit}
           disabled={submitting || !draft.trim()}
-          className="bg-accent text-white rounded-md px-3 h-7 text-[12px] font-medium hover:bg-accent-hover transition-colors duration-150 disabled:bg-line disabled:text-ink-muted"
+          className="bg-btn-primary text-btn-primary-fg rounded-md px-3 h-7 text-[12px] font-medium hover:bg-btn-primary-hover transition-colors duration-150 disabled:bg-line disabled:text-ink-muted"
         >
           {submitting ? 'Submitting…' : 'Submit suggestion'}
         </button>
@@ -962,7 +962,7 @@ function TableCell({
           type="button"
           onClick={submit}
           disabled={submitting || !draft.trim()}
-          className="bg-accent text-white rounded px-2 h-6 text-[11px] font-medium hover:bg-accent-hover transition-colors duration-150 disabled:bg-line disabled:text-ink-muted"
+          className="bg-btn-primary text-btn-primary-fg rounded px-2 h-6 text-[11px] font-medium hover:bg-btn-primary-hover transition-colors duration-150 disabled:bg-line disabled:text-ink-muted"
         >
           {submitting ? '…' : 'Submit'}
         </button>

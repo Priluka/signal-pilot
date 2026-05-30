@@ -110,6 +110,37 @@ def health() -> dict[str, object]:
     }
 
 
+@app.post("/admin/playbooks/reload", tags=["meta"])
+def reload_playbooks() -> dict[str, object]:
+    """Re-read the playbook directory and rebuild the embedding index.
+
+    Needed when frontmatter or body of a playbook changes at runtime —
+    ``app.state.playbooks`` is populated once at startup and otherwise
+    sticks until process restart. ``--reload`` only watches Python
+    files, so editing a ``.md`` is invisible to a live backend without
+    this hook.
+
+    Builds new playbooks + index into locals first, then atomically
+    swaps both onto ``app.state``. Concurrent /process callers see
+    either the old pair or the new pair, never a torn mix.
+    """
+    from core.retrieval import build_index
+
+    paths = discover_playbook_paths(config.PLAYBOOKS_DIR)
+    new_playbooks = [load_playbook(p) for p in paths]
+    new_index = build_index()
+    app.state.playbooks = new_playbooks
+    app.state.index = new_index
+    with_skills = sum(
+        1 for pb in new_playbooks if pb.metadata.get("allowed_skills")
+    )
+    return {
+        "status": "ok",
+        "playbooks_loaded": len(new_playbooks),
+        "with_skills": with_skills,
+    }
+
+
 app.include_router(playbooks.router)
 app.include_router(categories.router)
 app.include_router(discovery.router)

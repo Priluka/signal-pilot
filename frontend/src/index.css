@@ -22,29 +22,42 @@
    * option menu also paints dark instead of jarring white-on-dark. */
   color-scheme: light;
 
-  /* Surfaces */
-  --c-app: 245 245 245;             /* #F5F5F5  shell + sidebar */
+  /* Surfaces — warm-shifted grays (3-4 hex points between red and blue
+   * channels). Not obviously beige; feels expensive without anyone being
+   * able to point at it. Dark theme stays cool — warm dark looks muddy. */
+  --c-app: 246 245 242;             /* #F6F5F2  shell + sidebar */
   --c-card: 255 255 255;            /* #FFFFFF  floating content panel + cards */
   --c-elevated: 255 255 255;        /* dropdowns / modals */
-  --c-hover: 235 235 235;           /* #EBEBEB  row + sidebar item hover */
-  --c-active: 232 232 232;          /* #E8E8E8  active sidebar item */
+  --c-hover: 237 235 231;           /* #EDEBE7  row + sidebar item hover */
+  --c-active: 233 231 226;          /* #E9E7E2  active sidebar item */
 
-  /* Borders */
-  --c-line: 229 229 229;            /* #E5E5E5  default */
-  --c-line-subtle: 238 238 238;     /* #EEEEEE  inner dividers */
-  --c-line-strong: 212 212 212;     /* #D4D4D4  outer floating-panel border */
+  /* Borders — warm-shifted to match the surfaces. */
+  --c-line: 230 227 222;            /* #E6E3DE  default */
+  --c-line-subtle: 239 236 232;     /* #EFECE8  inner dividers */
+  --c-line-strong: 214 211 205;     /* #D6D3CD  outer floating-panel border */
 
-  /* Text */
+  /* Text — primary stays pure ink (warmth invisible at this lightness).
+   * Secondary + tertiary get a barely-perceptible warm cast. */
   --c-ink: 26 26 26;                /* #1A1A1A  primary */
-  --c-body: 107 107 107;            /* #6B6B6B  secondary */
-  --c-muted: 155 155 155;           /* #9B9B9B  tertiary / placeholders */
-  --c-faint: 155 155 155;           /* alias for tertiary */
+  --c-body: 107 105 102;            /* #6B6966  secondary */
+  --c-muted: 155 152 148;           /* #9B9894  tertiary / placeholders */
+  --c-faint: 155 152 148;           /* alias for tertiary */
 
-  /* Accent — indigo */
+  /* Accent — indigo. Still used for links, sidebar active state,
+   * slider fills, focus rings. NOT for primary CTAs anymore — those
+   * have their own token below so a future tweak to one doesn't
+   * cascade through the rest. */
   --c-accent: 99 102 241;           /* #6366F1 */
   --c-accent-hover: 84 87 229;      /* #5457E5 */
   --c-accent-subtle: 238 242 255;   /* #EEF2FF */
   --c-accent-fg: 79 70 229;         /* #4F46E5 — accent text on light */
+
+  /* Primary CTA — near-black filled button. Reads as "do this thing"
+   * without competing with the indigo accent used elsewhere. Inverted
+   * in dark mode (light button on dark bg). */
+  --c-btn-primary: 26 26 26;        /* #1A1A1A */
+  --c-btn-primary-fg: 255 255 255;  /* #FFFFFF */
+  --c-btn-primary-hover: 45 45 45;  /* #2D2D2D */
 
   /* Status colors — use Tailwind's bg-emerald / bg-red / bg-amber etc.
      in components. The CSS vars below just expose the brand palette if
@@ -76,6 +89,11 @@
   --c-accent-hover: 99 102 241;
   --c-accent-subtle: 30 27 75;
   --c-accent-fg: 165 180 252;
+
+  /* Primary CTA inverted for dark — light pill on dark bg. */
+  --c-btn-primary: 245 245 245;     /* #F5F5F5 */
+  --c-btn-primary-fg: 26 26 26;     /* #1A1A1A */
+  --c-btn-primary-hover: 229 229 229; /* #E5E5E5 */
 
   --c-success: 34 197 94;
   --c-warning: 245 158 11;

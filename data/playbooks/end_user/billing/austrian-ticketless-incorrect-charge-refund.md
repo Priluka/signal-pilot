@@ -16,6 +16,17 @@ languages:
 country_focus:
 - at
 status: active
+# Skills enabled — reads auto-execute, writes are HITL.
+allowed_skills:
+  - graylog_search
+  - parkis_lookup
+  - skidata_session_lookup
+  - bmove_user_lookup
+  - datatrans_transaction
+  - jira_get_history
+  - jira_add_internal_comment
+  - jira_add_public_comment
+  - jira_transition
 cluster_id: BS:end_user|austria|refund:c0
 project_key: BS
 cluster_size: 22
@@ -94,7 +105,7 @@ agent_compatibility:
   brainbox_skill: ready
   claude_skill: ready
   agent_assist: true
-  autonomous_resolve: false
+  autonomous_resolve: true
   note: Financial action — agent drafts, human approves
   autonomous_resolve_max_safe_volume_pct: 0.15
   autonomous_resolve_narrow_use_case: Auto-acknowledge and request missing session details (step 1 only) for clearly structured

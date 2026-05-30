@@ -39,8 +39,12 @@ MIN_RETRIEVAL_CONFIDENCE: float = float(os.environ.get("MIN_RETRIEVAL_CONFIDENCE
 #     on real tickets, so quality dominates here too.
 ANTHROPIC_API_KEY: str | None = os.environ.get("ANTHROPIC_API_KEY")
 CLASSIFIER_MODEL: str = os.environ.get("CLASSIFIER_MODEL", "claude-haiku-4-5-20251001")
-DRAFTER_MODEL: str = os.environ.get("DRAFTER_MODEL", "claude-opus-4-7")
-CHAT_MODEL: str = os.environ.get("CHAT_MODEL", "claude-opus-4-7")
+# TEST MODE: drafter + chat on Sonnet 4.6 while iterating — Opus is
+# the production target but burns through credit faster than we can
+# justify during UI/flow testing. Flip back to ``claude-opus-4-7``
+# when we want production-quality runs.
+DRAFTER_MODEL: str = os.environ.get("DRAFTER_MODEL", "claude-sonnet-4-6")
+CHAT_MODEL: str = os.environ.get("CHAT_MODEL", "claude-sonnet-4-6")
 CLASSIFIER_MAX_TOKENS: int = 256
 DRAFTER_MAX_TOKENS: int = 1500
 CHAT_MAX_TOKENS: int = int(os.environ.get("CHAT_MAX_TOKENS", "2000"))

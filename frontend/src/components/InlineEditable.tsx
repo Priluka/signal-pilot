@@ -156,7 +156,7 @@ export function InlineEditable({
           type="button"
           onClick={submit}
           disabled={submitting || !draft.trim()}
-          className="px-3 py-1 text-xs font-medium text-white bg-accent rounded hover:bg-accent-hover disabled:bg-line disabled:text-ink-muted"
+          className="px-3 py-1 text-xs font-medium bg-btn-primary text-btn-primary-fg rounded hover:bg-btn-primary-hover disabled:bg-line disabled:text-ink-muted"
         >
           {submitting ? 'Submitting…' : 'Submit suggestion'}
         </button>

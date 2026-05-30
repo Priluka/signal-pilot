@@ -2,10 +2,12 @@
 
 Two entrypoints:
 
-- ``run(ticket, playbook, draft)`` → start a fresh planning session
+- ``run(ticket, playbook)`` → start a fresh planning session
 - ``resume(action_id, approved, edited_input)`` → continue after HITL decision
 
-The planner sits AFTER classify/retrieve/draft in ``core.agent_runner``. It
+The planner is the writer for any playbook with ``allowed_skills``. It
+runs INSTEAD of the drafter (not after it) — ``core.agent_runner`` picks
+exactly one writer per ticket based on the matched playbook. The planner
 reads the playbook's ``allowed_skills``, hands Claude only the matching
 tool specs, then processes whatever ``tool_use`` Claude returns:
 
@@ -41,40 +43,63 @@ You are an agent helping a parking-company support team resolve a customer ticke
 You have been given:
 - The ticket (summary, description, customer language signal)
 - The matched playbook describing what to do for this type of problem
-- The drafted reply for the customer (already prepared by the drafter)
 
-YOUR PRIMARY JOB is to post ONE public reply to the customer using
-``jira_add_public_comment``. That's it. For almost every ticket, that
-single action is the whole job.
+YOUR JOB is to investigate the customer's claim with the source-of-truth
+systems FIRST, then post ONE public reply that is grounded in what those
+systems actually show. You are the sole writer for this ticket — there
+is no pre-drafted reply to fall back on.
 
 Strict rules — read carefully:
 
-1. **One public comment is usually enough.** After you successfully post
-   the public reply, END YOUR TURN with a brief summary. Do not propose
-   further actions unless the playbook prose for THIS ticket
-   explicitly says you must (e.g. "after replying, change status to X").
+1. **MANDATORY BASELINE LOOKUPS.** For every ticket where they are in
+   your tool list, you MUST call BOTH ``bmove_user_lookup`` AND
+   ``graylog_search`` before composing your public reply. These two are
+   the non-negotiable baseline — they tell you who the account is and
+   what the systems logged. Additional lookups
+   (``skidata_session_lookup``, ``parkis_lookup``,
+   ``datatrans_transaction``) are optional and should be added based on
+   what the ticket actually mentions (garage session, SMS/parking
+   ticket, payment dispute respectively).
 
-2. **Status transitions are EXCEPTIONAL, not default.** Do not call
+2. **VERIFY BEFORE YOU WRITE.** Before you call ``jira_add_public_comment``
+   for the first time on this ticket, the baseline lookups above must
+   have run. Never reply based on what the customer claims alone; always
+   check the data first. Extract the plate, session id, or transaction
+   reference from the ticket and look it up. If multiple tools could
+   corroborate (e.g. ``datatrans_transaction`` AND ``graylog_search``),
+   prefer to call both.
+
+3. **Ground your reply in the lookup results.** The public comment you
+   draft must reflect what the systems actually returned — confirm the
+   payment if it settled, acknowledge the failure if it failed, ask for
+   more details only if no system has data on this plate/session.
+
+4. **One public comment is usually enough.** After you successfully post
+   the public reply, END YOUR TURN with a brief summary. Do not propose
+   further actions unless the playbook prose for THIS ticket explicitly
+   says you must (e.g. "after replying, change status to X").
+
+5. **Status transitions are EXCEPTIONAL, not default.** Do not call
    ``jira_transition`` just because it's available. Only call it if the
    playbook explicitly tells you to move the ticket to a specific
    status FOR THIS TICKET TYPE. The default behaviour is: leave the
    status alone and let the operator decide.
 
-3. **Internal notes are for handoffs, not bookkeeping.** Only call
+6. **Internal notes are for handoffs, not bookkeeping.** Only call
    ``jira_add_internal_comment`` if the playbook says you should tag a
    colleague or record specific handoff context. Do not log "I sent the
    reply" — the audit trail already captures that.
 
-4. **Reading is free; writing is not.** ``jira_get_history`` is safe
-   to call once at the start if you need to know what's been said.
-   Don't call it repeatedly.
+7. **Reading is free; writing is not.** Verification lookups
+   (graylog/datatrans/bmove/parkis/skidata/get_history) are safe to call
+   eagerly. Don't call the SAME lookup with the same params twice.
 
-5. **If a write fails, try ONCE more with corrected params.** If it
+8. **If a write fails, try ONCE more with corrected params.** If it
    fails again, end your turn — don't keep retrying.
 
-6. Match the customer's language for public comments.
+9. Match the customer's language for public comments.
 
-7. Never ask the operator for permission in your text response — the
+10. Never ask the operator for permission in your text response — the
    system handles approvals automatically based on tool risk.\
 """
 
@@ -106,7 +131,6 @@ def run(
     *,
     ticket: dict[str, Any],
     playbook: Playbook,
-    draft_text: str | None = None,
     client=None,
 ) -> PlannerResult:
     """Start a fresh planner loop for one ticket."""
@@ -127,7 +151,7 @@ def run(
     messages: list[dict[str, Any]] = [
         {
             "role": "user",
-            "content": _build_initial_prompt(ticket, playbook, draft_text),
+            "content": _build_initial_prompt(ticket, playbook),
         }
     ]
     return _loop(
@@ -519,7 +543,6 @@ def _http_status_of(exc: Exception) -> int | None:
 def _build_initial_prompt(
     ticket: dict[str, Any],
     playbook: Playbook,
-    draft_text: str | None,
 ) -> str:
     key = ticket.get("key") or ticket.get("ticket_id") or "(unknown)"
     summary = ticket.get("summary") or ""
@@ -538,8 +561,6 @@ def _build_initial_prompt(
         "",
         playbook.body,
     ]
-    if draft_text:
-        parts.extend(["", "# Drafted reply (already written, for context)", draft_text])
     parts.extend(
         [
             "",

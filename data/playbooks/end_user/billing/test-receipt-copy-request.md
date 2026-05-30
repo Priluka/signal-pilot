@@ -31,7 +31,7 @@ agent_compatibility:
   brainbox_skill: ready
   claude_skill: ready
   agent_assist: true
-  autonomous_resolve: false
+  autonomous_resolve: true
   note: Test playbook — sve write akcije HITL u prvoj fazi
 ---
 

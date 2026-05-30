@@ -12,6 +12,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 import { AgentTimeline, type AgentTimelineProps } from './AgentTimeline';
+import { ThemeProvider } from '../lib/theme';
 import type {
   AgentSessionDetail,
   AuditEntry,
@@ -94,6 +95,7 @@ function baseProps(
     processing: false,
     processError: null,
     onProcess: vi.fn(),
+    streamError: null,
     editing: false,
     editedText: session?.draft?.draft ?? '',
     hasEdits: false,
@@ -111,7 +113,11 @@ function baseProps(
 
 
 function renderRouted(node: React.ReactElement) {
-  return render(<MemoryRouter>{node}</MemoryRouter>);
+  return render(
+    <ThemeProvider>
+      <MemoryRouter>{node}</MemoryRouter>
+    </ThemeProvider>,
+  );
 }
 
 
@@ -175,7 +181,7 @@ describe('AgentTimeline', () => {
     renderRouted(
       <AgentTimeline {...baseProps(session, { isActionable: false })} />,
     );
-    expect(screen.getByText('Draft approved')).toBeInTheDocument();
+    expect(screen.getByText('Reviewer approved')).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /approve & send/i }),
     ).toBeNull();
@@ -236,7 +242,7 @@ describe('AgentTimeline', () => {
     );
     expect(screen.getByText(/Planner started/)).toBeInTheDocument();
     expect(
-      screen.getByText('jira_add_public_comment executed'),
+      screen.getByText('Jira comment posted'),
     ).toBeInTheDocument();
     expect(screen.getByText('Agent finished')).toBeInTheDocument();
     expect(screen.getByText(/1 action executed/)).toBeInTheDocument();
@@ -267,7 +273,7 @@ describe('AgentTimeline', () => {
       screen.getByText(/jira_add_public_comment · shadow — no effect/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/jira_add_public_comment executed/),
+      screen.queryByText(/Jira comment posted/),
     ).toBeNull();
     // Agent finished summary must not count this shadow row as executed.
     expect(screen.getByText(/0 actions executed/)).toBeInTheDocument();
@@ -297,6 +303,41 @@ describe('AgentTimeline', () => {
     expect(
       screen.getByText(/jira_get_history executed \(auto\)/),
     ).toBeInTheDocument();
+  });
+
+  it('renders red Agent-failed-at node when streamError is set mid-session', () => {
+    const session = makeSession();
+    renderRouted(
+      <AgentTimeline
+        {...baseProps(session, {
+          streamError: { step: 'draft', message: 'JSON parse error' },
+        })}
+      />,
+    );
+    expect(screen.getByText('Agent failed at draft')).toBeInTheDocument();
+    expect(screen.getByText(/JSON parse error/)).toBeInTheDocument();
+    // The legacy/skills branch must NOT render under an error.
+    expect(
+      screen.queryByRole('button', { name: /approve & send/i }),
+    ).toBeNull();
+  });
+
+  it('renders streamError standalone when no session has formed yet', () => {
+    renderRouted(
+      <AgentTimeline
+        {...baseProps(null, {
+          processing: false,
+          source: 'jira',
+          streamError: { step: 'classify', message: 'Anthropic 502' },
+        })}
+      />,
+    );
+    expect(screen.getByText('Agent failed at classify')).toBeInTheDocument();
+    // Ready-to-process must not also render — operator should re-process
+    // explicitly to clear the error.
+    expect(
+      screen.queryByRole('button', { name: /process with agent/i }),
+    ).toBeNull();
   });
 
   it('renders red Agent loop failed step when planner_status=failed', () => {
