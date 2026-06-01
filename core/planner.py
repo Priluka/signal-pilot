@@ -335,9 +335,28 @@ def _loop(
                 messages=messages,
             )
         except Exception as exc:  # noqa: BLE001
+            # Persist the failure as an audit row so the timeline shows
+            # it chronologically next to the skill calls that DID run,
+            # rather than only as a terminal banner. Without this, an
+            # operator inspecting the run after the fact sees the
+            # executed skills + the 'Agent loop failed' tail but no
+            # discrete entry for when / why the loop died.
+            err_msg = f"anthropic_error: {exc}"
+            _safe_audit(
+                ticket=ticket,
+                playbook_id=playbook.id,
+                skill_name="_planner_loop",
+                skill_input={},
+                outcome="planner_error",
+                ok=False,
+                result_data=None,
+                error=err_msg,
+                mode=mode,
+                iteration=iteration,
+            )
             return PlannerResult(
                 status="failed",
-                error=f"anthropic_error: {exc}",
+                error=err_msg,
                 iterations=iteration,
             )
 
@@ -402,11 +421,35 @@ def _loop(
 
             if vr.requires_approval:
                 # Snapshot the tool_results we've already produced for
-                # earlier blocks in THIS assistant turn. Without them
-                # the resumed Anthropic call would violate the contract
-                # "every tool_use must be paired with a tool_result in
-                # the next user message" — Anthropic rejects partial
-                # tool_result lists with 400 invalid_request_error.
+                # earlier blocks in THIS assistant turn AND synthesise
+                # 'deferred' results for any tool_use blocks AFTER this
+                # one. Without the trailing half, resume() rebuilds a
+                # user message that lacks pairings for the orphan blocks
+                # and Anthropic rejects the next call with 400
+                # 'tool_use ids found without tool_result blocks'. The
+                # deferred message tells the model it can re-issue the
+                # call after the operator's decision lands; in practice
+                # this only fires when Claude packed multiple writes
+                # (e.g. internal_comment + public_comment) into a single
+                # turn — rare but real.
+                deferred_results: list[dict[str, Any]] = []
+                seen_self = False
+                for sibling in response.content:
+                    if sibling is block:
+                        seen_self = True
+                        continue
+                    if not seen_self:
+                        continue
+                    if getattr(sibling, "type", None) != "tool_use":
+                        continue
+                    deferred_results.append(
+                        _tool_result_error(
+                            sibling.id,
+                            "deferred: HITL pause on a prior tool_use in the "
+                            "same assistant turn. Re-issue this call after "
+                            "the operator's decision if still needed.",
+                        )
+                    )
                 action_id = pending_actions.save(
                     ticket_id=str(
                         ticket.get("key") or ticket.get("ticket_id") or "?"
@@ -418,7 +461,7 @@ def _loop(
                     tool_use_id=block.id,
                     iteration=iteration,
                     mode=mode,
-                    partial_tool_results=list(tool_results),
+                    partial_tool_results=list(tool_results) + deferred_results,
                 )
                 return PlannerResult(
                     status="awaiting_approval",

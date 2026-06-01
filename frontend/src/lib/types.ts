@@ -472,7 +472,7 @@ export interface AuditEntry {
   playbook_id: string;
   skill_name: string;
   skill_input: Record<string, unknown>;
-  outcome: 'approved' | 'rejected' | 'auto' | 'shadow';
+  outcome: 'approved' | 'rejected' | 'auto' | 'shadow' | 'planner_error';
   ok: boolean;
   result_data: Record<string, unknown> | null;
   error: string | null;

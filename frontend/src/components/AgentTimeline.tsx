@@ -705,21 +705,33 @@ function HistoryStep({ entry }: { entry: AuditEntry }) {
   // misled the operator into believing the skill had executed.
   const isShadow = entry.outcome === 'shadow';
   const isReject = entry.outcome === 'rejected';
-  const isFail = !entry.ok && !isReject;
+  // planner_error rows are synthetic: not a skill failure but the
+  // tool_use loop itself dying mid-run (Anthropic outage, validator
+  // bomb, etc.). Render with the same red treatment as a skill fail
+  // but with a clearer title so the operator distinguishes 'this
+  // skill broke' from 'the planner broke between skills'.
+  const isPlannerError = entry.outcome === 'planner_error';
+  const isFail = !entry.ok && !isReject && !isPlannerError;
   const kind: StepKind = isShadow
     ? 'shadow'
     : isReject
     ? 'rejected'
-    : isFail
+    : isPlannerError || isFail
     ? 'failed'
     : entry.skill_name.endsWith('comment')
     ? 'comment_posted'
     : 'approved';
-  const icon: LucideIcon = isShadow ? Pencil : isReject || isFail ? X : Check;
+  const icon: LucideIcon = isShadow
+    ? Pencil
+    : isReject || isFail || isPlannerError
+    ? X
+    : Check;
   const title = isShadow
     ? `${entry.skill_name} · shadow — no effect`
     : isReject
     ? `${entry.skill_name} rejected`
+    : isPlannerError
+    ? 'Planner loop failed'
     : isFail
     ? `${entry.skill_name} failed`
     : entry.skill_name === 'jira_add_public_comment'
@@ -731,6 +743,8 @@ function HistoryStep({ entry }: { entry: AuditEntry }) {
     ? 'Skill was not called — shadow mode logs the request only.'
     : isReject
     ? entry.error || 'rejected by operator'
+    : isPlannerError
+    ? entry.error || 'planner crash'
     : isFail
     ? entry.error || 'skill error'
     : briefResult(entry.result_data);

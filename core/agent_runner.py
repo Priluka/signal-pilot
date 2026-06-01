@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
-from core import agent_sessions
+from core import agent_audit, agent_sessions
 from core.classifier import classify_ticket
 from core.drafter import draft_reply
 from core.retrieval import (
@@ -531,6 +531,28 @@ def _record_error(ticket_id: str, step: str, exc: Exception) -> None:
         agent_sessions.mark_error(ticket_id, step, msg)
     except Exception:  # noqa: BLE001
         pass
+    # Planner-step crashes also get a row in agent_actions_history so
+    # the timeline shows the failure in chronological position next to
+    # the skill calls that did run before it died. The terminal
+    # PlannerOutcomeStep still renders the banner; this is the
+    # discrete history entry that lives ABOVE it.
+    if step == "planner":
+        rec = agent_sessions.get_session(ticket_id)
+        try:
+            agent_audit.record(
+                ticket_id=ticket_id,
+                playbook_id=(rec.draft_playbook_id or "unknown") if rec else "unknown",
+                skill_name="_planner_loop",
+                skill_input={},
+                outcome="planner_error",
+                ok=False,
+                result_data=None,
+                error=msg,
+                mode=(rec.processed_mode or "unknown") if rec else "unknown",
+                iteration=0,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def start_batch(
