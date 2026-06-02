@@ -139,6 +139,7 @@ B2B partners (primarily Dubrovnik Pass Office staff) submit recurring tickets re
 - Attraction has a special or modified opening time on a specific date or date range
 - Private events or holidays alter standard visiting hours
 - Partner needs bilingual (HR+EN) notice published on Dubrovnik Pass website
+- test
 
 ## Typical resolution flow
 
