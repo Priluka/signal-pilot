@@ -139,7 +139,7 @@ Internal partner tickets requesting configuration of Android PPC handheld device
 
 ## Typical resolution flow
 
-1. Receive the device (new or returned from service)
+1. Receive the device (new or returned from service) [PROOF-SENTINEL-1780428788]
 2. Perform hard reset if required
 3. Configure Android PPC device settings
 4. Install the appropriate RAO application (RAO.city, RAO.nkp, or RAO.park)
