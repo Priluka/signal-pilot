@@ -1,0 +1,79 @@
+# docker-compose for signal-pilot — backend + bundled frontend +
+# optional spend watcher cron sidecar.
+#
+# Usage:
+#   docker compose up -d                    # boot everything
+#   docker compose logs -f backend          # tail backend logs
+#   docker compose exec backend python scripts/backup_db.py
+#
+# The frontend is built into a static bundle by the same Dockerfile;
+# a tiny ``caddy`` container serves it and proxies /chat/* + /health*
+# + /metrics to the backend.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: signal-pilot/backend:latest
+    container_name: signal-pilot-backend
+    restart: unless-stopped
+    env_file:
+      # Production secrets (ANTHROPIC_API_KEY, VOYAGE_API_KEY, etc.)
+      # live in .env at the repo root. The file is gitignored.
+      - .env
+    environment:
+      # Reasonable production defaults — override per-deployment.
+      EMBEDDING_PROVIDER: "${EMBEDDING_PROVIDER:-voyage}"
+      CHAT_TURN_COST_CAP_USD: "${CHAT_TURN_COST_CAP_USD:-0.50}"
+      CHAT_THREAD_COST_CAP_USD: "${CHAT_THREAD_COST_CAP_USD:-5.00}"
+      CHAT_RATE_LIMIT_TURNS: "${CHAT_RATE_LIMIT_TURNS:-20}"
+      CHAT_THREAD_RETENTION_DAYS: "${CHAT_THREAD_RETENTION_DAYS:-90}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS}"
+    volumes:
+      # Persist the DB and backup dir on the host so container
+      # restarts don't lose chat history.
+      - ./data:/app/data
+      - ./backups:/app/backups
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health/live',timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Static frontend served by caddy. The build artifact lives in
+  # ``frontend/dist`` — run ``cd frontend && npm run build`` before
+  # ``docker compose up``.
+  frontend:
+    image: caddy:2-alpine
+    container_name: signal-pilot-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./frontend/dist:/usr/share/caddy
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+
+  # Optional sidecar: daily backup + retention purge. Disabled by
+  # default — uncomment when running in production.
+  # backup_cron:
+  #   image: signal-pilot/backend:latest
+  #   restart: unless-stopped
+  #   depends_on: [backend]
+  #   volumes:
+  #     - ./data:/app/data
+  #     - ./backups:/app/backups
+  #   entrypoint: ["/bin/sh", "-c"]
+  #   command:
+  #     - |
+  #       while true; do
+  #         python scripts/backup_db.py --keep 14 || true
+  #         python scripts/spend_watcher.py --warn 5 --alert 25 || true
+  #         sleep 86400
+  #       done

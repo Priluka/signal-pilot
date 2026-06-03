@@ -176,7 +176,7 @@ Zagrebparking (a B2B partner) notifies Bmove support that a parking ticket has b
 
 Derived from 34 tickets in cluster `BS:b2b_partner|croatia|storno:c1`. Direct quotes from 5 representative tickets:
 
-- `BS-8584` _[hr]_: "stornirali smo parkirnu kartu 465571. Molimo izvršiti povrat: Šimun Mihanović, HR2823900013218309890."
+- `BS-8584` _[hr]_: "stornirali smo parkirnu kartu 465571. Molimo izvršiti povrat: Šimun Mihanović, HR28**********."
 - `BS-8584` _[hr]_: "karta 465571 je poništena i novac je vraćen korisniku."
 - `BS-18984` _[hr]_: "molim storno Erste kupovine z487g-qqpkn-sxf u iznosu od 2.10€ (Satna parkirališna karta; Zona 2; Zagreb, reg. oznaka ZG****). Transakcija je stornirana u IGeusu."
 - `BS-8665` _[hr]_: "Ovaj IBAN koji je naveden za povrat je IBAN od Bmove-a, netko je vjerojatno krivo negdje prepisao. Pošaljite mi IBAN korisnice."

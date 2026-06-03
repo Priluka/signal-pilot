@@ -413,6 +413,74 @@ class ChatSessionDetail(ChatSessionSummary):
     events: list[dict[str, Any]] = Field(default_factory=list)
 
 
+# --- Multi-turn chat (threads + turns) -------------------------------------
+
+
+class CreateThreadRequest(BaseModel):
+    """Optional title — caller may pass one to label the thread upfront;
+    otherwise the backend auto-derives one from the first turn's
+    user_text once it lands."""
+    title: str | None = None
+
+
+class AddTurnRequest(BaseModel):
+    """One operator message + optional retrieval top_k. The backend
+    runs the full agentic loop with the thread's prior conversation in
+    context and streams events back via SSE (same protocol as the
+    single-shot /chat/agentic endpoint plus a ``compacted`` event
+    that fires whenever the 5-tier compaction kicks in)."""
+    user_text: str
+    top_k: int = 3
+
+
+class ChatThreadOut(BaseModel):
+    id: int
+    title: str
+    created_at: str
+    updated_at: str
+
+
+class ChatThreadSummaryOut(ChatThreadOut):
+    """Sidebar row — adds counts + last-status + preview so the
+    frontend doesn't have to re-fetch per row."""
+    turn_count: int
+    last_status: str
+    last_user_text: str
+
+
+class ChatTurnOut(BaseModel):
+    id: int
+    thread_id: int
+    turn_index: int
+    user_text: str
+    final_assistant_text: str
+    # Full Anthropic-shaped message list for THIS turn's contribution
+    # (user msg + assistant turns + tool_result msgs). The frontend
+    # uses ``events`` for the skill-timeline UI and ``trace`` only when
+    # it needs the raw conversation (e.g. an admin "show me the
+    # underlying messages" debug view).
+    trace: list[dict[str, Any]] = Field(default_factory=list)
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    sources: list[RetrievalHitOut] = Field(default_factory=list)
+    citation_index: list[CitationEntry] = Field(default_factory=list)
+    # Phase 9D — accumulated Anthropic usage for this turn. Empty dict
+    # on legacy turns from before the migration. Shape:
+    # {"input_tokens": int, "output_tokens": int, "cost_usd": float}.
+    usage: dict[str, Any] = Field(default_factory=dict)
+    status: str = "done"
+    error_message: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class ChatThreadDetailOut(BaseModel):
+    """Thread + all turns in order. Returned by GET /chat/threads/{id}
+    when the operator opens a conversation. Caller renders turns array
+    as the conversation, in order."""
+    thread: ChatThreadOut
+    turns: list[ChatTurnOut] = Field(default_factory=list)
+
+
 # --- Feedback --------------------------------------------------------------
 class FeedbackRequest(BaseModel):
     ticket_id: str

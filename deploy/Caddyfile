@@ -1,0 +1,51 @@
+# Caddy reverse proxy for signal-pilot.
+#
+# Serves the static frontend bundle and proxies API + SSE traffic to
+# the backend container. Caddy handles automatic HTTPS via Let's
+# Encrypt when a real domain is set (replace ``:80`` with the
+# domain).
+
+:80 {
+    # Static frontend — anything not matched by /chat/* or /health*
+    # falls through to here. The ``try_files`` directive supports
+    # client-side routing (refresh on /chat/123 still loads index.html).
+    encode gzip zstd
+
+    handle /chat/* {
+        reverse_proxy backend:8000 {
+            # Buffer disabled so SSE streams reach the client
+            # immediately. Without this the operator sees the chat
+            # reply land in big chunks instead of token-by-token.
+            flush_interval -1
+        }
+    }
+
+    handle /health* {
+        reverse_proxy backend:8000
+    }
+
+    handle /metrics {
+        # Restrict metrics scraping to monitoring infrastructure.
+        # In production replace this with an allowlist or basic auth.
+        reverse_proxy backend:8000
+    }
+
+    handle /admin/* {
+        reverse_proxy backend:8000
+    }
+
+    handle {
+        root * /usr/share/caddy
+        try_files {path} /index.html
+        file_server
+    }
+
+    # Security headers — minimal sensible defaults. Adjust CSP for
+    # the real domain.
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer-when-downgrade"
+        -Server
+    }
+}

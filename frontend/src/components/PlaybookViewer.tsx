@@ -273,7 +273,11 @@ function EditableRow({
   text,
   onSubmit,
   editing,
-  onStartEdit,
+  // onStartEdit is supplied by the parent's call site at line 574 but
+  // is no longer needed inside the row — entering edit mode now
+  // happens via the parent's click-through prop. Kept in the props
+  // signature for backwards source-compat with the parent's spread.
+  onStartEdit: _onStartEdit,
   onCancelEdit,
   className,
 }: {

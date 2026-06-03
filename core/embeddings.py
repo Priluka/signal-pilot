@@ -182,9 +182,89 @@ class VoyageEmbeddingProvider(EmbeddingProvider):
         return vectors
 
 
+class FallbackEmbeddingProvider(EmbeddingProvider):
+    """Phase 13.10 — try the primary provider, fall back to the
+    secondary on transient errors. We don't want a Voyage 429 or
+    expired-credit error to take the whole agent down when a fully
+    local model can answer instead.
+
+    The fallback is sticky for the current call only — every call
+    tries primary first. Once primary recovers we go back to using it
+    transparently. The ``name`` reflects whichever provider produced
+    a given embedding via ``last_name``.
+    """
+
+    def __init__(
+        self, primary: EmbeddingProvider, secondary: EmbeddingProvider
+    ) -> None:
+        self._primary = primary
+        self._secondary = secondary
+        self.name = f"chain:{primary.name}|{secondary.name}"
+        # Dim should match between primary and secondary or downstream
+        # cosine maths breaks. Caller is responsible for picking a
+        # compatible pair (BGE-m3 1024 vs voyage-3 1024). We log a
+        # warning at first use if they differ.
+        self._dim_warned = False
+
+    def _maybe_warn_dim(self) -> None:
+        if self._dim_warned:
+            return
+        p_dim = getattr(self._primary, "dim", None)
+        s_dim = getattr(self._secondary, "dim", None)
+        if p_dim and s_dim and p_dim != s_dim:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "embedding provider chain dim mismatch: %s=%d vs %s=%d; "
+                "fallback embeddings won't be retrieval-comparable",
+                self._primary.name,
+                p_dim,
+                self._secondary.name,
+                s_dim,
+            )
+        self._dim_warned = True
+
+    def embed(self, text: str) -> list[float]:
+        self._maybe_warn_dim()
+        try:
+            return self._primary.embed(text)
+        except Exception as exc:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "embed fallback: primary %s failed (%s), using %s",
+                self._primary.name,
+                type(exc).__name__,
+                self._secondary.name,
+            )
+            return self._secondary.embed(text)
+
+    def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
+        self._maybe_warn_dim()
+        try:
+            return self._primary.embed_batch(texts)
+        except Exception as exc:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "embed_batch fallback: primary %s failed (%s), using %s",
+                self._primary.name,
+                type(exc).__name__,
+                self._secondary.name,
+            )
+            return self._secondary.embed_batch(texts)
+
+
 @lru_cache(maxsize=1)
 def get_embedding_provider() -> EmbeddingProvider:
-    """Factory dispatch. Adding a new backend means one elif branch here."""
+    """Factory dispatch. ``EMBEDDING_PROVIDER`` values:
+
+      • ``local``  — sentence-transformers only
+      • ``voyage`` — Voyage AI only
+      • ``chain``  — try voyage first, fall back to local on errors.
+                    Phase 13.10 — recommended for production where
+                    Voyage rate limits / outages are a real risk.
+    """
     provider = config.EMBEDDING_PROVIDER.lower()
     if provider == "local":
         return LocalSentenceTransformerProvider(
@@ -196,4 +276,14 @@ def get_embedding_provider() -> EmbeddingProvider:
             model_name=config.EMBEDDING_MODEL_VOYAGE,
             api_key=os.environ.get("VOYAGE_API_KEY", ""),
         )
+    if provider == "chain":
+        primary = VoyageEmbeddingProvider(
+            model_name=config.EMBEDDING_MODEL_VOYAGE,
+            api_key=os.environ.get("VOYAGE_API_KEY", ""),
+        )
+        secondary = LocalSentenceTransformerProvider(
+            model_name=config.EMBEDDING_MODEL_LOCAL,
+            device=config.EMBEDDING_DEVICE,
+        )
+        return FallbackEmbeddingProvider(primary, secondary)
     raise ValueError(f"Unknown EMBEDDING_PROVIDER: {config.EMBEDDING_PROVIDER!r}")

@@ -1,9 +1,34 @@
+# Production dependencies. Pinned with floors so the Docker build
+# stays reproducible while still picking up patch-level security
+# fixes. Bump the Anthropic SDK carefully — streaming event shapes
+# have changed between minor versions before.
+
+# Core API + LLM
 anthropic>=0.40.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 httpx>=0.27.0
+starlette>=0.40.0
+pydantic>=2.10.0
 python-dotenv>=1.0.0
+
+# Numerics / retrieval
+numpy>=1.26.0
 langdetect>=1.0.9
 pyyaml>=6.0.2
-numpy>=1.26.0
+
+# Phase 12.6 — Prometheus metrics endpoint
+prometheus_client>=0.20.0
+
+# Phase 12.7 — JSON schema validation for skill responses
+jsonschema>=4.20.0
+
+# Embedding providers — voyageai is the production primary,
+# sentence-transformers is the Phase 13.10 local fallback.
+voyageai>=0.2.0
+sentence-transformers>=2.7.0
+
+# Test runner (kept here so the docker image can run smoke tests
+# in-container during CI).
 pytest>=8.0.0
+requests>=2.32.0

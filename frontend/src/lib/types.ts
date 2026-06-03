@@ -540,7 +540,65 @@ export interface ChatErrorEvent {
   message: string;
 }
 
-// Chat history
+// Multi-turn chat threads (Phase 4)
+
+export interface ChatThread {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatThreadSummary extends ChatThread {
+  /** Number of turns persisted for this thread. */
+  turn_count: number;
+  /** Status of the most recent turn ('streaming' / 'done' / 'error'). */
+  last_status: 'streaming' | 'done' | 'error';
+  /** First ~80 chars of the most recent turn's user_text — sidebar preview. */
+  last_user_text: string;
+}
+
+/** One operator-perceived exchange inside a thread: the question +
+ *  the agent's full reply (text + tool execution timeline). */
+export interface ChatTurn {
+  id: number;
+  thread_id: number;
+  turn_index: number;
+  user_text: string;
+  final_assistant_text: string;
+  /** Full Anthropic-shaped message list for THIS turn's contribution.
+   *  Used internally for context carryover; UI renders ``events`` for
+   *  the skill timeline and ``final_assistant_text`` for the prose. */
+  trace?: Array<Record<string, unknown>>;
+  /** Skill execution + composing events the agent emitted during
+   *  this turn. Same payload as the live SSE stream so the UI can
+   *  replay it on history load with identical layout. */
+  events: ChatEvent[];
+  sources: RetrievalHitOut[];
+  citation_index: CitationIndexEntry[];
+  /** Phase 9D — accumulated Anthropic usage for this turn. Empty
+   *  object on legacy turns from before the cost-tracking migration.
+   *  When populated: input_tokens + output_tokens (integers) and
+   *  cost_usd (float, USD). The TurnView renders this as a quiet
+   *  footer below the answer so the operator sees what each turn
+   *  cost. */
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cost_usd?: number;
+  };
+  status: 'streaming' | 'done' | 'error';
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatThreadDetail {
+  thread: ChatThread;
+  turns: ChatTurn[];
+}
+
+// Chat history (legacy single-turn — kept for backwards compat)
 export interface ChatSessionSummary {
   id: number;
   question: string;
@@ -584,7 +642,32 @@ export type ChatEvent =
       error: string | null;
       elapsed_ms: number;
     }
-  | { type: 'composing' };
+  | { type: 'composing' }
+  | {
+      type: 'thinking';
+      /** 1-based iteration index of the agent loop. Lets the UI show
+       *  'step N' if we ever want to surface progress depth, though
+       *  for v1 we just use it as an 'agent is alive' heartbeat
+       *  between skill calls and text streaming. */
+      iteration: number;
+    }
+  | {
+      /** Phase 9B — Sonnet's native extended-thinking channel. Each
+       *  delta is a chunk of the model's reasoning *before* it writes
+       *  the user-facing answer. UI renders accumulated thinking as a
+       *  collapsible quote above the answer prose. */
+      type: 'thinking_text';
+      text: string;
+    }
+  | {
+      type: 'compacted';
+      /** 1 = snipped tool_result content; 2 = dropped oldest turns;
+       *  3 = summarised early conversation with an LLM call. */
+      tier: number;
+      before_tokens: number;
+      after_tokens: number;
+      dropped_turns: number;
+    };
 
 // Agent runtime config + per-playbook overrides
 export type AgentMode = 'shadow' | 'assisted' | 'autonomous';

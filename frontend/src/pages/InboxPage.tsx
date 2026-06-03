@@ -13,6 +13,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Inbox as InboxIcon,
   ListFilter,
+  Loader2,
 } from 'lucide-react';
 
 
@@ -358,12 +359,44 @@ export function InboxPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceFilter, statusFilter]);
 
-  // Auto-select first row when no key in URL.
+  // Phase 16 — keyboard navigation across the inbox list. ↑/↓ moves
+  // the active row, Enter opens whatever the cursor is on. When no
+  // ticket is selected (empty state), ↓ / Enter open the first row.
+  // No auto-select on mount: the operator should land on the empty
+  // state and choose, matching Slack / Linear / Gmail conventions.
   useEffect(() => {
-    if (ticketKey) return;
-    if (inboxRows.length === 0) return;
-    navigate(`/inbox/${inboxRows[0].ticket.key}`, { replace: true });
-  }, [ticketKey, inboxRows, navigate]);
+    function onKey(e: KeyboardEvent) {
+      // Skip when typing in an input/textarea so the operator's edits
+      // aren't hijacked by our nav.
+      const tgt = e.target as HTMLElement | null;
+      const tag = tgt?.tagName?.toLowerCase();
+      if (
+        tag === 'input'
+        || tag === 'textarea'
+        || tag === 'select'
+        || tgt?.isContentEditable
+      ) return;
+      if (inboxRows.length === 0) return;
+      const currentIdx = ticketKey
+        ? inboxRows.findIndex((r) => r.ticket.key === ticketKey)
+        : -1;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const next = currentIdx < 0 ? 0 : Math.min(currentIdx + 1, inboxRows.length - 1);
+        navigate(`/inbox/${inboxRows[next].ticket.key}`, { replace: true });
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const next = currentIdx < 0 ? 0 : Math.max(currentIdx - 1, 0);
+        navigate(`/inbox/${inboxRows[next].ticket.key}`, { replace: true });
+      } else if (e.key === 'Enter' && currentIdx < 0) {
+        // Enter from empty state opens the first row.
+        e.preventDefault();
+        navigate(`/inbox/${inboxRows[0].ticket.key}`, { replace: true });
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [inboxRows, ticketKey, navigate]);
 
   // After a LOCAL decision the just-approved/rejected row leaves the
   // visible list — auto-clear the URL so the operator isn't stuck on a
@@ -478,7 +511,30 @@ export function InboxPage() {
           ) : activeTicket ? (
             <AgentTicketDetail ticket={activeTicket} source={activeSource} />
           ) : (
-            <EmptyTicketDetail />
+            <EmptyTicketDetail
+              // Show spinner while any source is still fetching —
+              // otherwise local rows render first with a partial count
+              // (e.g. 20) and the number visibly jumps to the final
+              // total (e.g. 36) once Jira lands a second later, which
+              // looks janky and confuses operators about queue size.
+              loading={showLoadingState}
+              totalCount={inboxRows.length}
+              pendingCount={
+                inboxRows.filter(
+                  (r) =>
+                    (r.session?.derived_status ?? 'pending') === 'pending'
+                    || r.session?.derived_status === 'needs_review'
+                    || r.session?.derived_status === 'escalated',
+                ).length
+              }
+              resolvedCount={
+                inboxRows.filter((r) =>
+                  ['auto_resolved', 'approved', 'auto_drafted'].includes(
+                    r.session?.derived_status ?? '',
+                  ),
+                ).length
+              }
+            />
           )}
         </div>
       </div>
@@ -654,11 +710,98 @@ function BatchInlineNotice({
 }
 
 
-function EmptyTicketDetail() {
+function EmptyTicketDetail({
+  loading,
+  totalCount,
+  pendingCount,
+  resolvedCount,
+}: {
+  loading: boolean;
+  totalCount: number;
+  pendingCount: number;
+  resolvedCount: number;
+}) {
+  // Loading branch wins over everything else — counts that pop from
+  // partial → final mid-render look janky and undermine trust in the
+  // number. Render the spinner until both sources have settled.
+  if (loading) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-ink-muted">
+        <Loader2
+          width={28}
+          height={28}
+          strokeWidth={1.5}
+          className="animate-spin text-ink-faint mb-3"
+        />
+        <p className="text-[13px]">Loading inbox…</p>
+      </div>
+    );
+  }
+
+  // Three states drive the copy + tone:
+  //   • All caught up — no rows in queue at all.
+  //   • Queue has work — show counts so the operator gets context
+  //     before they pick the first row.
+  //   • Generic — shouldn't fire in practice but covers the gap.
+  const allCaughtUp = totalCount === 0;
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-ink-muted">
-      <InboxIcon width={28} height={28} strokeWidth={1.5} className="text-ink-faint mb-3" />
-      <p className="text-sm">Select a ticket to view details</p>
+    <div className="flex-1 flex flex-col items-center justify-center px-6 text-center text-ink-muted">
+      <InboxIcon
+        width={48}
+        height={48}
+        strokeWidth={1.25}
+        className="text-ink-faint mb-5 opacity-60"
+      />
+      <h2 className="text-[15px] font-medium text-ink-body mb-1.5">
+        {allCaughtUp ? 'All caught up' : 'Select a ticket'}
+      </h2>
+      <p className="text-[13px] text-ink-muted max-w-sm">
+        {allCaughtUp
+          ? 'No tickets in the queue right now. New ones will appear here as they arrive.'
+          : 'Click any row on the left to start triaging.'}
+      </p>
+
+      {!allCaughtUp && (
+        <>
+          <div className="mt-6 flex items-center gap-5 text-[12px] text-ink-muted">
+            <div className="flex flex-col items-center">
+              <span className="text-[18px] font-medium text-ink-body tabular-nums">
+                {pendingCount}
+              </span>
+              <span>pending</span>
+            </div>
+            <div className="w-px h-8 bg-line" />
+            <div className="flex flex-col items-center">
+              <span className="text-[18px] font-medium text-ink-body tabular-nums">
+                {resolvedCount}
+              </span>
+              <span>resolved</span>
+            </div>
+            <div className="w-px h-8 bg-line" />
+            <div className="flex flex-col items-center">
+              <span className="text-[18px] font-medium text-ink-body tabular-nums">
+                {totalCount}
+              </span>
+              <span>total</span>
+            </div>
+          </div>
+
+          <div className="mt-6 text-[11px] text-ink-muted/80 flex items-center gap-1.5">
+            <kbd className="px-1.5 py-0.5 bg-app border border-line rounded text-[10px] font-mono">
+              ↑
+            </kbd>
+            <kbd className="px-1.5 py-0.5 bg-app border border-line rounded text-[10px] font-mono">
+              ↓
+            </kbd>
+            <span className="ml-1">to navigate</span>
+            <span className="mx-1.5">·</span>
+            <kbd className="px-1.5 py-0.5 bg-app border border-line rounded text-[10px] font-mono">
+              Enter
+            </kbd>
+            <span className="ml-1">to open</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }

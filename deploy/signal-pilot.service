@@ -1,0 +1,59 @@
+# systemd unit for signal-pilot backend on a bare-metal host.
+#
+# Install:
+#   sudo cp deploy/signal-pilot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now signal-pilot
+#
+# The service expects:
+#   • A dedicated ``signal-pilot`` user with read access to /opt/signal-pilot
+#   • A ``.venv`` already created (``python -m venv .venv && pip install -r requirements.txt``)
+#   • ``.env`` populated with secrets
+#
+# On SIGTERM the backend honours ``SHUTDOWN_GRACE_S`` (default 20s)
+# before exit, so ``TimeoutStopSec`` is set above that.
+
+[Unit]
+Description=signal-pilot backend (FastAPI + uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=signal-pilot
+Group=signal-pilot
+WorkingDirectory=/opt/signal-pilot
+EnvironmentFile=/opt/signal-pilot/.env
+ExecStart=/opt/signal-pilot/.venv/bin/uvicorn backend.main:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --workers 1
+Restart=on-failure
+RestartSec=5
+
+# Graceful shutdown: send SIGTERM, wait up to 40s before SIGKILL.
+# This must exceed config.SHUTDOWN_GRACE_S so the drain logic can
+# finish before systemd reaps.
+KillSignal=SIGTERM
+TimeoutStopSec=40
+
+# Hardening — minimum surface for a Python web service. Tighten
+# further per the production threat model.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/signal-pilot/data /opt/signal-pilot/backups
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+
+# Resource limits — adjust based on host. 2GB is plenty for the
+# backend without the sentence-transformers fallback model loaded.
+MemoryMax=2G
+CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target

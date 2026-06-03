@@ -26,6 +26,23 @@ allowed_skills:
   - jira_add_internal_comment      # write, low-risk, može auto
   - jira_transition                # write, HITL obavezno
 
+# ============================================================
+# Phase 16 — machine-readable hard-blocks. Validator rejects these
+# even in autonomous mode, regardless of allowed_skills above.
+# Use sparingly: the prose 'Must not automate' bullets describe
+# WHY; this section enforces it.
+# ============================================================
+forbidden_actions:
+  jira_transition:
+    reason: "Ticket closure must be operator-confirmed (Must not automate §5)"
+    block_in: [assisted, autonomous]
+  jira_add_public_comment:
+    must_not_contain:
+      - "ticket je zatvor"
+      - "closing this ticket"
+      - "marking as resolved"
+      - "ticket has been closed"
+
 agent_compatibility:
   rag_consumable: true
   brainbox_skill: ready

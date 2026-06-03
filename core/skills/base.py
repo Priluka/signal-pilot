@@ -32,6 +32,14 @@ class Skill(ABC):
     description: ClassVar[str]
     input_schema: ClassVar[dict[str, Any]]
 
+    # Phase 12.7 — optional JSON schema describing the SUCCESSFUL
+    # response shape (``SkillResult.data``). When set, the agent loop
+    # validates the dict against this schema after execute() returns;
+    # malformed responses get treated as a skill error and a clean
+    # message goes to the LLM instead of garbage. Default ``None``
+    # keeps every existing skill working unchanged — opt-in per skill.
+    output_schema: ClassVar[dict[str, Any] | None] = None
+
     # Set by subclass — used by validator/planner
     is_write: ClassVar[bool]
 

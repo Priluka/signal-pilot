@@ -82,7 +82,12 @@ function summarize(events: ChatEvent[]): {
   let otherOk = 0;
   let failed = 0;
   for (const ev of events) {
-    if (ev.type === 'composing') continue;
+    if (
+      ev.type === 'composing' ||
+      ev.type === 'compacted' ||
+      ev.type === 'thinking' ||
+      ev.type === 'thinking_text'
+    ) continue;
     if (ev.type === 'skill_executing') {
       totalCalls += 1;
       hasInflight = true;
@@ -137,7 +142,13 @@ export function AgenticSkillTimeline({
    *  sources. */
   citationCount?: number;
 }) {
-  const rows = events.filter((e) => e.type !== 'composing');
+  // Skill rows = skill_executing + skill_executed only. Compaction
+  // markers and the composing signal are surfaced elsewhere; they
+  // don't belong in the per-call list.
+  const rows = events.filter(
+    (e): e is Extract<typeof e, { type: 'skill_executing' } | { type: 'skill_executed' }> =>
+      e.type === 'skill_executing' || e.type === 'skill_executed',
+  );
   // Hook order matters in React — declare hooks BEFORE any early
   // return so the order stays stable across renders. The empty-rows
   // case still returns null below, just after all hooks have run.
@@ -219,12 +230,12 @@ export function AgenticSkillTimeline({
       {expanded && (
         <ol className="pl-2 mt-2 space-y-1">
           {rows.map((ev, i) => (
+            // ``rows`` is filtered to skill_executing | skill_executed
+            // already — composing markers are dropped above. Use
+            // call_id when present (stable across the executing →
+            // executed swap), else fall back to skill+index.
             <SkillRow
-              key={
-                ev.type !== 'composing' && ev.call_id
-                  ? ev.call_id
-                  : `${ev.type !== 'composing' ? ev.skill : 'composing'}-${i}`
-              }
+              key={ev.call_id ?? `${ev.skill}-${i}`}
               ev={ev}
             />
           ))}
@@ -235,9 +246,14 @@ export function AgenticSkillTimeline({
 }
 
 
-function SkillRow({ ev }: { ev: ChatEvent }) {
+type SkillEvent = Extract<
+  ChatEvent,
+  { type: 'skill_executing' } | { type: 'skill_executed' }
+>;
+
+
+function SkillRow({ ev }: { ev: SkillEvent }) {
   const [expanded, setExpanded] = useState(false);
-  if (ev.type === 'composing') return null;
 
   const isExecuting = ev.type === 'skill_executing';
   const ok = ev.type === 'skill_executed' && ev.ok;

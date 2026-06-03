@@ -24,6 +24,7 @@ env/
 *.sqlite3
 *.db
 data/cache/
+backups/
 
 # Node.js (frontend has its own .gitignore; these are a safety net against
 # accidental root-level installs from a botched `cd frontend && npm i`.)

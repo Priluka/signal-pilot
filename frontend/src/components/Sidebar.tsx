@@ -86,8 +86,10 @@ function NavRow({ to, label, icon: Icon, count }: NavRowProps) {
 
 
 function ChatNavRow() {
-  const { status } = useChatStore();
-  const streaming = status === 'streaming';
+  // Drive the nav-row spinner from streamingTurnId — any non-null
+  // value means a turn is currently being generated.
+  const { streamingTurnId } = useChatStore();
+  const streaming = streamingTurnId != null;
   return (
     <NavLink
       to="/chat"

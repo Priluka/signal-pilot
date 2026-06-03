@@ -57,6 +57,18 @@ export function PlaybookList({
   searchString,
 }: Props) {
   const { slug } = useParams();
+  const activeRowRef = useRef<HTMLLIElement | null>(null);
+
+  // Auto-scroll the highlighted playbook into view whenever ``slug``
+  // changes — e.g. when the operator clicks a Related-playbook chip
+  // from another playbook's detail. ``block: 'nearest'`` so already-
+  // visible rows stay put and only off-screen targets get a scroll.
+  useEffect(() => {
+    if (!slug) return;
+    const el = activeRowRef.current;
+    if (!el) return;
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [slug, playbooks]);
 
   const options = useMemo(() => deriveFilterOptions(playbooks), [playbooks]);
 
@@ -134,7 +146,10 @@ export function PlaybookList({
           {filtered.map((pb) => {
             const isActive = slug === pb.id;
             return (
-              <li key={pb.id}>
+              <li
+                key={pb.id}
+                ref={isActive ? activeRowRef : undefined}
+              >
                 <Link
                   to={{ pathname: `/knowledge/${pb.id}`, search: searchString }}
                   className={`block mx-2 px-3 py-3 rounded-lg transition-colors duration-150 ${

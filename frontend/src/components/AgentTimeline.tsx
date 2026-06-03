@@ -879,8 +879,8 @@ function PendingStep({
               {busy
                 ? 'Executing…'
                 : hasEdits
-                ? 'Approve edits & run'
-                : 'Approve & run'}
+                ? 'Approve edits & continue'
+                : 'Approve & continue'}
             </button>
           </div>
         </div>

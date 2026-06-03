@@ -323,13 +323,12 @@ function EvidenceBlock({
             </div>
             <div className="flex flex-wrap gap-1.5">
               {ids.map((t) => (
-                <Link
+                <span
                   key={t}
-                  to={`/inbox/${t}`}
-                  className="text-[10px] font-mono bg-app border border-line rounded px-1.5 py-0.5 text-ink-body hover:bg-hover hover:text-ink transition-colors duration-150"
+                  className="text-[10px] font-mono bg-app border border-line rounded px-1.5 py-0.5 text-ink-muted"
                 >
                   {t}
-                </Link>
+                </span>
               ))}
             </div>
           </div>

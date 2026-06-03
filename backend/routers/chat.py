@@ -26,18 +26,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
+import time
+import uuid
 from typing import Any, AsyncIterator
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from core import chat_history
+import config
+
+log = logging.getLogger(__name__)
+
+from core import chat_history, chat_threads
 from core.answerer import extract_all_cited_ids, extract_cited_ids, stream_answer
 import re
 
-from core.chat_agent import run_agentic_chat
+from core.chat_agent import (
+    run_agentic_chat,
+    run_agentic_turn,
+    self_correct_citations,
+    request_interrupt as request_turn_interrupt,
+)
 from core.embeddings import get_embedding_provider
 from core.skills.registry import REGISTRY
 
@@ -81,10 +93,16 @@ from core.retrieval import (
 
 from ..deps import get_playbook_index
 from ..schemas import (
+    AddTurnRequest,
     ChatRequest,
     ChatSessionDetail,
     ChatSessionSummary,
+    ChatThreadDetailOut,
+    ChatThreadOut,
+    ChatThreadSummaryOut,
+    ChatTurnOut,
     CitationEntry,
+    CreateThreadRequest,
     RetrievalHitOut,
 )
 from .agent import _hit_to_out
@@ -104,6 +122,67 @@ _TAIL_POLL_INTERVAL = 0.15
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+# ---------------------------------------------------------------------------
+# Per-IP rate limiter — Phase 10.
+# ---------------------------------------------------------------------------
+#
+# A misbehaving operator (or an unintended refresh loop) can fire
+# enough turns in seconds to either exhaust the Anthropic budget or
+# starve the backend. We track per-client-IP request counts in a
+# sliding window held in memory. The window is small enough that
+# operators never hit it in normal use; a determined offender bounces
+# off a 429.
+
+_RATE_LOCK = threading.Lock()
+_RATE_BUCKETS: dict[str, list[float]] = {}
+
+
+def _client_ip(request: "Request") -> str:
+    """Best-effort client identity. Honours X-Forwarded-For when behind
+    a trusted proxy (treats the leftmost IP as the originator); falls
+    back to the raw socket peer. We don't authenticate the header —
+    deployment is expected to set it via a reverse proxy that strips
+    untrusted forwarded values."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    client = request.client
+    return client.host if client else "unknown"
+
+
+def _enforce_rate_limit(request: "Request", key_suffix: str = "") -> None:
+    """Sliding-window per-IP rate limit. Raises 429 when the bucket is
+    full. Called at the top of any endpoint that costs Anthropic
+    tokens. ``key_suffix`` lets callers segment buckets per endpoint
+    family if needed; for now we share a single bucket across thread
+    creation and turn submission since they cost roughly the same."""
+    limit = config.CHAT_RATE_LIMIT_TURNS
+    window = config.CHAT_RATE_WINDOW_SECONDS
+    if limit <= 0:
+        return  # disabled
+    now = time.time()
+    cutoff = now - window
+    key = f"{_client_ip(request)}::{key_suffix}"
+    with _RATE_LOCK:
+        bucket = _RATE_BUCKETS.get(key, [])
+        bucket = [t for t in bucket if t > cutoff]
+        if len(bucket) >= limit:
+            retry_after = max(1, int(window - (now - bucket[0])))
+            from core.metrics import CHAT_RATE_LIMIT_HITS
+
+            CHAT_RATE_LIMIT_HITS.inc()
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Rate limit: {limit} requests per "
+                    f"{window}s exceeded. Retry in {retry_after}s."
+                ),
+                headers={"Retry-After": str(retry_after)},
+            )
+        bucket.append(now)
+        _RATE_BUCKETS[key] = bucket
 
 
 def _build_citation_index(
@@ -647,3 +726,541 @@ def delete_session(session_id: int) -> None:
         raise HTTPException(
             status_code=404, detail=f"Chat session {session_id} not found"
         )
+
+
+# ===========================================================================
+# Multi-turn chat — threads + turns. Replaces the single-shot ``/chat/agentic``
+# path for new conversations; the legacy endpoint stays in place for the
+# frontend's existing flow until Phase 4 migrates it.
+# ===========================================================================
+
+
+# Daemon-thread registry keyed by turn_id (each turn is its own
+# tool_use loop). Separate from the legacy ``_running_threads`` map so
+# session-id collisions can't happen.
+_running_turn_threads: dict[int, threading.Thread] = {}
+_turn_threads_lock = threading.Lock()
+
+
+def _turn_to_out(t: chat_threads.ChatTurn) -> ChatTurnOut:
+    """Convert the storage dataclass to the API Pydantic model. Sources
+    are stored as raw dicts in the row; we wrap them in RetrievalHitOut
+    so the response shape matches the rest of the chat API."""
+    return ChatTurnOut(
+        id=t.id,
+        thread_id=t.thread_id,
+        turn_index=t.turn_index,
+        user_text=t.user_text,
+        final_assistant_text=t.final_assistant_text,
+        trace=t.trace,
+        events=t.events,
+        sources=[RetrievalHitOut(**h) for h in t.sources],
+        citation_index=[CitationEntry(**c) for c in t.citation_index],
+        usage=t.usage,
+        status=t.status,
+        error_message=t.error_message,
+        created_at=t.created_at,
+        updated_at=t.updated_at,
+    )
+
+
+def _thread_to_out(t: chat_threads.ChatThread) -> ChatThreadOut:
+    return ChatThreadOut(
+        id=t.id,
+        title=t.title,
+        created_at=t.created_at,
+        updated_at=t.updated_at,
+    )
+
+
+def _thread_summary_to_out(
+    s: chat_threads.ChatThreadSummary,
+) -> ChatThreadSummaryOut:
+    return ChatThreadSummaryOut(
+        id=s.id,
+        title=s.title,
+        created_at=s.created_at,
+        updated_at=s.updated_at,
+        turn_count=s.turn_count,
+        last_status=s.last_status,
+        last_user_text=s.last_user_text,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Daemon thread — wraps run_agentic_turn so the operator's HTTP request
+# can return as soon as the SSE tail attaches.
+# ---------------------------------------------------------------------------
+
+
+def _run_turn_thread(
+    turn_id: int,
+    thread_id: int,
+    user_text: str,
+    initial_playbook: Playbook,
+    playbooks: list[Playbook],
+    index: PlaybookIndex | None,
+    initial_sources: list[dict[str, Any]],
+) -> None:
+    """Background driver for one turn. ``run_agentic_turn`` does its own
+    persistence (events, trace, status) so this wrapper's only job is
+    to catch unhandled exceptions and stamp the turn ``error`` so the
+    SSE tail can terminate cleanly. Citation index is computed AFTER
+    the loop ends (it needs the full final answer)."""
+
+    def _on_event(kind: str, payload: dict[str, Any]) -> None:  # noqa: ARG001
+        # run_agentic_turn already persists events_json itself. The
+        # daemon doesn't need to do anything extra per emit — the SSE
+        # tail polls the row and forwards new entries.
+        return
+
+    # Seed the turn's sources_json so the tail can emit a ``sources``
+    # event immediately on attach. The agent might later call
+    # search_playbooks and discover OTHER playbooks; those go into
+    # events as skill_executed entries, not into sources_json.
+    try:
+        chat_threads.update_turn(turn_id, sources=initial_sources)
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        result = run_agentic_turn(
+            thread_id=thread_id,
+            user_text=user_text,
+            initial_playbook=initial_playbook,
+            on_event=_on_event,
+            turn_id=turn_id,  # reuse the row the HTTP handler created
+        )
+        # Re-read the turn the agent just finished — it may have
+        # marked status='error' for a cooperative cancellation
+        # (interrupt). In that case we MUST NOT override status with
+        # 'done' below; the operator pressed Stop and the error
+        # message carries the cancellation marker.
+        post_run = chat_threads.get_turn(turn_id)
+        answer_text = result.answer
+        if post_run is not None and post_run.status == "error":
+            # Agent already finalised the row (interrupt path or
+            # internal error). Compute citations on whatever final
+            # text we have but leave status untouched.
+            citation_index = _build_citation_index(
+                answer_text, playbooks, index
+            )
+            chat_threads.update_turn(
+                turn_id, citation_index=citation_index
+            )
+        else:
+            # Phase 9C — citation self-correction. If the answer
+            # references playbook ids that don't exist anywhere in
+            # the corpus, run one corrective rewrite to drop the
+            # invalid citations before persisting. Only fires when
+            # hallucinations are actually present, so the happy path
+            # adds zero LLM cost.
+            try:
+                valid_ids = (
+                    {pb.id for pb in index.playbooks}
+                    if index is not None
+                    else {pb.id for pb in playbooks}
+                )
+                corrected, invalid = self_correct_citations(
+                    answer_text, valid_ids
+                )
+                if invalid:
+                    answer_text = corrected
+                    chat_threads.update_turn(
+                        turn_id, final_assistant_text=corrected
+                    )
+            except Exception:  # noqa: BLE001
+                # Self-correction is best-effort — never let a
+                # correction-side bug fail the whole turn.
+                pass
+            citation_index = _build_citation_index(
+                answer_text, playbooks, index
+            )
+            chat_threads.update_turn(
+                turn_id,
+                citation_index=citation_index,
+                status="done",
+            )
+        _ = extract_cited_ids(answer_text, playbooks)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            chat_threads.update_turn(
+                turn_id, status="error", error_message=str(exc)
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _ensure_turn_thread(
+    turn_id: int,
+    thread_id: int,
+    user_text: str,
+    initial_playbook: Playbook,
+    playbooks: list[Playbook],
+    index: PlaybookIndex | None,
+    initial_sources: list[dict[str, Any]],
+) -> None:
+    """Spawn the daemon for one turn — idempotent if a thread is
+    already running for the same turn_id (e.g. a duplicate POST while
+    the first one's SSE tail is still mid-stream)."""
+    # Capture the inbound request id so the daemon's log lines carry
+    # the same correlation id as the SSE response that triggered them.
+    from backend.main import current_request_id, set_request_id
+
+    rid = current_request_id()
+
+    def _bootstrap() -> None:
+        set_request_id(rid)
+        log.info(
+            "turn daemon start: turn_id=%d thread_id=%d", turn_id, thread_id
+        )
+        try:
+            _run_turn_thread(
+                turn_id,
+                thread_id,
+                user_text,
+                initial_playbook,
+                playbooks,
+                index,
+                initial_sources,
+            )
+            log.info("turn daemon done: turn_id=%d", turn_id)
+        except Exception:  # noqa: BLE001
+            log.exception("turn daemon crashed: turn_id=%d", turn_id)
+            raise
+
+    with _turn_threads_lock:
+        existing = _running_turn_threads.get(turn_id)
+        if existing is not None and existing.is_alive():
+            return
+        th = threading.Thread(
+            target=_bootstrap,
+            name=f"chat-turn-{turn_id}",
+            daemon=True,
+        )
+        _running_turn_threads[turn_id] = th
+        th.start()
+
+
+# ---------------------------------------------------------------------------
+# SSE tail for a turn — polls chat_turns.events_json + final_assistant_text
+# + status. Same shape as the legacy ``_sse_tail`` but reads from
+# chat_turns instead of chat_sessions.
+# ---------------------------------------------------------------------------
+
+
+async def _sse_turn_tail(turn_id: int) -> AsyncIterator[str]:
+    turn = await asyncio.to_thread(chat_threads.get_turn, turn_id)
+    if turn is None:
+        yield _sse("error", {"message": f"turn {turn_id} not found"})
+        return
+
+    yield _sse(
+        "sources",
+        {
+            "hits": turn.sources,
+            "thread_id": turn.thread_id,
+            "turn_id": turn.id,
+        },
+    )
+
+    # Replay any events captured before the client attached.
+    last_event_idx = 0
+    for ev in turn.events:
+        kind = ev.get("type", "")
+        payload = {k: v for k, v in ev.items() if k != "type"}
+        if kind:
+            yield _sse(kind, payload)
+        last_event_idx += 1
+
+    last_pos = len(turn.final_assistant_text)
+    if last_pos > 0:
+        yield _sse("delta", {"text": turn.final_assistant_text})
+
+    if turn.status == "done":
+        yield _sse(
+            "done",
+            {
+                "answer": turn.final_assistant_text,
+                "citation_index": turn.citation_index,
+                "thread_id": turn.thread_id,
+                "turn_id": turn.id,
+            },
+        )
+        return
+    if turn.status == "error":
+        yield _sse(
+            "error",
+            {"message": turn.error_message or "unknown error"},
+        )
+        return
+
+    while True:
+        await asyncio.sleep(_TAIL_POLL_INTERVAL)
+        current = await asyncio.to_thread(chat_threads.get_turn, turn_id)
+        if current is None:
+            yield _sse("error", {"message": f"turn {turn_id} disappeared"})
+            return
+        if len(current.events) > last_event_idx:
+            for ev in current.events[last_event_idx:]:
+                kind = ev.get("type", "")
+                payload = {k: v for k, v in ev.items() if k != "type"}
+                if kind:
+                    yield _sse(kind, payload)
+            last_event_idx = len(current.events)
+        if len(current.final_assistant_text) > last_pos:
+            yield _sse(
+                "delta",
+                {"text": current.final_assistant_text[last_pos:]},
+            )
+            last_pos = len(current.final_assistant_text)
+        if current.status == "done":
+            yield _sse(
+                "done",
+                {
+                    "answer": current.final_assistant_text,
+                    "citation_index": current.citation_index,
+                    "thread_id": current.thread_id,
+                    "turn_id": current.id,
+                },
+            )
+            return
+        if current.status == "error":
+            yield _sse(
+                "error",
+                {"message": current.error_message or "unknown error"},
+            )
+            return
+
+
+# ---------------------------------------------------------------------------
+# Public thread endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/threads", response_model=ChatThreadOut)
+def create_thread(
+    request: Request, req: CreateThreadRequest | None = None
+) -> ChatThreadOut:
+    """Create an empty thread. Title is optional; if omitted, the
+    backend rewrites it from the first turn's user_text on landing.
+    Frontend can call this on 'New chat' button or implicitly via
+    ``POST /chat/threads/{auto}/turns`` once we add that convenience
+    route (not in v1)."""
+    _enforce_rate_limit(request, key_suffix="thread")
+    title = (req.title if req is not None else None)
+    t = chat_threads.create_thread(title=title)
+    return _thread_to_out(t)
+
+
+@router.get("/threads", response_model=list[ChatThreadSummaryOut])
+def list_threads_endpoint(limit: int = 200) -> list[ChatThreadSummaryOut]:
+    """Sidebar list. Newest first. Each row carries turn_count +
+    last_status + a preview of the most recent user_text so the
+    frontend doesn't fetch per-row."""
+    return [
+        _thread_summary_to_out(s)
+        for s in chat_threads.list_threads(limit=limit)
+    ]
+
+
+@router.get("/threads/{thread_id}", response_model=ChatThreadDetailOut)
+def get_thread_detail_endpoint(thread_id: int) -> ChatThreadDetailOut:
+    """Thread + every turn in order. Used by the frontend when the
+    operator clicks a thread in the sidebar — payload contains
+    everything needed to render the conversation."""
+    detail = chat_threads.get_thread_detail(thread_id)
+    if detail is None:
+        raise HTTPException(
+            status_code=404, detail=f"Thread {thread_id} not found"
+        )
+    return ChatThreadDetailOut(
+        thread=_thread_to_out(detail.thread),
+        turns=[_turn_to_out(t) for t in detail.turns],
+    )
+
+
+@router.delete("/threads/{thread_id}", status_code=204)
+def delete_thread_endpoint(thread_id: int) -> None:
+    """Delete the thread + all turns (FK cascade)."""
+    deleted = chat_threads.delete_thread(thread_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail=f"Thread {thread_id} not found"
+        )
+
+
+@router.post("/threads/{thread_id}/turns")
+def add_turn(
+    thread_id: int, req: AddTurnRequest, request: Request
+) -> StreamingResponse:
+    """Append a new turn to the thread and stream the agent's response
+    via SSE. Same protocol as the legacy /chat/agentic endpoint plus
+    a ``compacted`` event when the 5-tier compaction kicks in.
+
+    Retrieval runs per-turn: each new user_text is embedded fresh and
+    the top hit becomes the ``initial_playbook`` passed to the agent.
+    The agent can still pivot via ``search_playbooks`` mid-loop if the
+    conversation drifts from that initial match.
+    """
+    _enforce_rate_limit(request, key_suffix="turn")
+    if not req.user_text.strip():
+        raise HTTPException(status_code=422, detail="Empty user_text")
+
+    if chat_threads.get_thread(thread_id) is None:
+        raise HTTPException(
+            status_code=404, detail=f"Thread {thread_id} not found"
+        )
+
+    # Phase 11.5 — cumulative per-thread cost cap. Sum usage_json
+    # across every prior turn on this thread and reject if it's
+    # already at the ceiling. Per-turn cap (Phase 10) protects
+    # against runaway single turns; this one stops a long thread
+    # from quietly accreting cost across dozens of turns.
+    thread_cap = config.CHAT_THREAD_COST_CAP_USD
+    if thread_cap > 0:
+        prior_cost = 0.0
+        for prior in chat_threads.list_turns_for_thread(thread_id):
+            prior_cost += float((prior.usage or {}).get("cost_usd") or 0.0)
+        if prior_cost >= thread_cap:
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    f"Thread cost cap reached: spent ${prior_cost:.4f} "
+                    f">= cap ${thread_cap:.4f}. Start a new thread."
+                ),
+            )
+
+    index = get_playbook_index(request)
+    provider = get_embedding_provider()
+    query_vector = np.asarray(
+        provider.embed(req.user_text), dtype=np.float32
+    )
+    text_country = country_from_text(req.user_text)
+    hits = index.search(
+        query_vector,
+        country=text_country,
+        language=None if text_country else detect_language(req.user_text),
+        ticket_class=None,
+        country_boost=text_country,
+        keyword_boost_ids=keyword_boosted_playbooks(req.user_text),
+        top_k=req.top_k,
+    )
+    hit_payload = [_hit_to_out(h).model_dump() for h in hits]
+    playbooks = [h.playbook for h in hits]
+    initial_playbook = playbooks[0] if playbooks else None
+
+    if initial_playbook is None:
+        # No hits at all — create a turn marked done with a graceful
+        # 'I don't have context for that' answer rather than spinning
+        # up the agent loop.
+        turn = chat_threads.create_pending_turn(
+            thread_id=thread_id, user_text=req.user_text
+        )
+        chat_threads.update_turn(
+            turn.id,
+            sources=hit_payload,
+            final_assistant_text=(
+                "I don't have any playbook context for that question. "
+                "Try rephrasing or asking about a specific customer / "
+                "plate / ticket."
+            ),
+            status="done",
+        )
+        return _sse_response(_sse_turn_tail(turn.id))
+
+    # Create the pending turn FIRST (so the SSE tail has something to
+    # attach to), THEN spawn the daemon that runs the agent loop and
+    # streams events into the row.
+    turn = chat_threads.create_pending_turn(
+        thread_id=thread_id, user_text=req.user_text
+    )
+    _ensure_turn_thread(
+        turn_id=turn.id,
+        thread_id=thread_id,
+        user_text=req.user_text,
+        initial_playbook=initial_playbook,
+        playbooks=playbooks,
+        index=index,
+        initial_sources=hit_payload,
+    )
+    return _sse_response(_sse_turn_tail(turn.id))
+
+
+@router.post("/threads/{thread_id}/turns/{turn_id}/interrupt", status_code=204)
+def interrupt_turn(thread_id: int, turn_id: int) -> None:  # noqa: ARG001
+    """Cooperatively cancel a turn that's currently streaming. Backend
+    sets a flag; the agent loop checks it at the next iteration
+    boundary and exits with ``status='error'`` +
+    ``error_message='Cancelled by operator'``. Idempotent — calling
+    twice is a no-op.
+
+    Within an iteration the Anthropic stream cannot be killed from
+    outside, so an interrupt has up to one full LLM round-trip of
+    latency. The UI marks the turn cancelled immediately on the
+    client side so the operator sees instant feedback; the server
+    state catches up within a few seconds.
+
+    Returns 204 even when the turn doesn't exist — the operator
+    doesn't care, and 404 here would race with concurrent
+    finish-and-delete flows. Returning 404 only on missing thread
+    would be inconsistent with that, so we keep it simple."""
+    turn = chat_threads.get_turn(turn_id)
+    if turn is not None:
+        request_turn_interrupt(turn_id)
+
+
+@router.get("/threads/{thread_id}/turns/{turn_id}/stream")
+def stream_turn(
+    thread_id: int, turn_id: int, request: Request  # noqa: ARG001
+) -> StreamingResponse:
+    """Re-attach to a turn that's mid-stream or already finished.
+    Mirrors the legacy ``GET /chat/sessions/{id}/stream`` so the
+    frontend can rehydrate on refresh — events_json + final answer
+    are replayed first, then live events stream if status is still
+    'streaming'.
+
+    ``thread_id`` is in the path mainly for URL clarity; the turn_id
+    alone is enough to find the row. We don't 404 on mismatch — if
+    the turn exists we serve it.
+    """
+    turn = chat_threads.get_turn(turn_id)
+    if turn is None:
+        raise HTTPException(
+            status_code=404, detail=f"Turn {turn_id} not found"
+        )
+    return _sse_response(_sse_turn_tail(turn_id))
+
+
+# ---------------------------------------------------------------------------
+# Retention admin — Phase 12.9.
+# ---------------------------------------------------------------------------
+#
+# The default is ``CHAT_THREAD_RETENTION_DAYS=90``. This endpoint is
+# what a daily cron job hits to enforce it; we don't run a background
+# scheduler in-process to keep operational behaviour explicit.
+
+
+@router.post("/admin/threads/purge", tags=["admin"])
+def purge_old_threads(older_than_days: int | None = None) -> dict[str, int]:
+    """Delete chat threads older than the cutoff. Defaults to the
+    configured retention window. Returns ``{"deleted": N}``. Idempotent
+    — safe to invoke from a daily cron. FK cascade removes all child
+    chat_turns rows automatically."""
+    days = (
+        older_than_days
+        if older_than_days is not None
+        else config.CHAT_THREAD_RETENTION_DAYS
+    )
+    if days <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="older_than_days must be positive",
+        )
+    deleted = chat_threads.purge_threads_older_than(days)
+    log.info(
+        "retention sweep: deleted %d threads older than %d days",
+        deleted,
+        days,
+    )
+    return {"deleted": deleted, "older_than_days": days}

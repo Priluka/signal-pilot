@@ -353,13 +353,10 @@ function ModeSection({
                   : 'border-line hover:border-line-strong hover:bg-hover'
               }`}
             >
-              <div className="flex items-center justify-between mb-2">
+              <div className="mb-2">
                 <span className="text-[13px] font-semibold text-ink">
                   {m.label}
                 </span>
-                {active && (
-                  <span className="w-2 h-2 rounded-full bg-accent" />
-                )}
               </div>
               <p className="text-[12px] text-ink-body leading-relaxed">
                 {m.blurb}

@@ -200,7 +200,7 @@ Derived from 29 tickets in cluster `BS:end_user|no_value|no_label:c2`. Direct qu
 - `BS-4158` _[hr]_: "navedeni problem je bio na strani vanjskog sustava koji upravlja parking artiklima"
 - `BS-16154` _[other]_: "Neviem odstranit vozidlo zo systemu."
 - `BS-36141` _[en]_: "testing tickets => closing"
-- `BS-4201` _[hr]_: "molim da me kontaktirate 0989224024"
+- `BS-4201` _[hr]_: "molim da me kontaktirate [REDACTED_PHONE]"
 - `BS-4808` _[hr]_: "pokusao sam platiti parking za solin ali ne radi..."
 - `BS-26977` _[hr]_: "ne radi Bmove App"
 

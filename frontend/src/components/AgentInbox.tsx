@@ -5,6 +5,7 @@
  * title in semibold ink; rows the operator has already acted on drop to
  * regular weight and muted color.
  */
+import { useEffect, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import type {
@@ -51,6 +52,18 @@ function isUnread(session: AgentSessionSummary | undefined): boolean {
 
 export function AgentInbox({ rows, loading, error }: Props) {
   const { ticketKey } = useParams();
+  const activeRowRef = useRef<HTMLLIElement | null>(null);
+
+  // Scroll the active row into view whenever the URL ticket key changes
+  // (deep-link from /home, ↑/↓ navigation, or post-decision navigation).
+  // ``block: 'nearest'`` so we only scroll when the row is off-screen —
+  // already-visible rows stay put, no jumpy re-centring.
+  useEffect(() => {
+    if (!ticketKey) return;
+    const el = activeRowRef.current;
+    if (!el) return;
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [ticketKey, rows]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -74,7 +87,10 @@ export function AgentInbox({ rows, loading, error }: Props) {
             const isActive = ticketKey === t.key;
             const unread = isUnread(s);
             return (
-              <li key={t.key}>
+              <li
+                key={t.key}
+                ref={isActive ? activeRowRef : undefined}
+              >
                 <Link
                   to={`/inbox/${t.key}`}
                   className={`block mx-2 px-3 py-3 rounded-lg transition-colors duration-150 ${

@@ -100,7 +100,21 @@ Strict rules — read carefully:
 9. Match the customer's language for public comments.
 
 10. Never ask the operator for permission in your text response — the
-   system handles approvals automatically based on tool risk.\
+   system handles approvals automatically based on tool risk.
+
+11. **'Must not automate' is a HARD CONSTRAINT, not advice.** If the
+   playbook lists any action under 'Must not automate' or 'Risks &
+   safety constraints', you MUST NOT propose that action — not even
+   if the customer explicitly asks for it. The customer asking does
+   not lower the bar. If a forbidden action is required to resolve
+   the ticket, post ONE internal_comment flagging the operator and
+   end your turn. Do NOT call the forbidden skill yourself.
+
+12. **Closure decisions belong to the operator.** Never call
+   ``jira_transition`` to close, resolve, or mark a ticket done unless
+   the playbook explicitly says you SHOULD auto-transition for this
+   exact ticket type. Customer satisfaction or a 'please close this'
+   request is NOT sufficient.\
 """
 
 
@@ -384,7 +398,12 @@ def _loop(
             if getattr(block, "type", None) != "tool_use":
                 continue
 
-            vr = validate(block.name, playbook.metadata, mode)
+            vr = validate(
+                block.name,
+                playbook.metadata,
+                mode,
+                tool_input=dict(block.input or {}),
+            )
             if not vr.ok:
                 tool_results.append(
                     _tool_result_error(block.id, f"validator: {vr.reason}")
@@ -392,6 +411,44 @@ def _loop(
                 continue
 
             skill = get_skill(block.name)
+
+            # Phase 16 Layer 3 — prose judge. Only invoke for writes
+            # that would AUTO-EXECUTE in autonomous mode; the HITL
+            # gate in assisted mode already gives the operator the
+            # last word, and shadow mode is dry-run. Skips when the
+            # playbook prose has no risk language.
+            if (
+                mode == "autonomous"
+                and skill is not None
+                and skill.is_write
+                and not vr.requires_approval
+            ):
+                judge_violates, judge_reason = _judge_prose_violation(
+                    playbook=playbook,
+                    skill_name=block.name,
+                    skill_input=dict(block.input or {}),
+                    client=client,
+                )
+                if judge_violates:
+                    tool_results.append(
+                        _tool_result_error(
+                            block.id,
+                            f"prose_judge: {judge_reason}",
+                        )
+                    )
+                    _safe_audit(
+                        ticket=ticket,
+                        playbook_id=playbook.id,
+                        skill_name=block.name,
+                        skill_input=dict(block.input or {}),
+                        outcome="prose_blocked",
+                        ok=False,
+                        result_data=None,
+                        error=judge_reason,
+                        mode=mode,
+                        iteration=iteration,
+                    )
+                    continue
 
             # Shadow mode never executes writes; reads still run (harmless).
             if mode == "shadow" and (skill is None or skill.is_write):
@@ -615,6 +672,105 @@ def _build_initial_prompt(
     return "\n".join(parts)
 
 
+_JUDGE_SYSTEM_PROMPT = """\
+You are a safety-judge for an automated support agent. Your sole job
+is to answer ONE question: does the proposed write action violate any
+'Must not automate' or 'Risks & safety constraints' rule documented in
+the playbook prose?
+
+Read the playbook excerpt carefully. Then look at the proposed skill +
+parameters. Answer with a single JSON object EXACTLY:
+
+  {"violates": true, "reason": "short explanation"}      or
+  {"violates": false}
+
+Rules of thumb:
+- A customer asking for the forbidden action does NOT lower the bar.
+- 'Closing the ticket', 'marking resolved', 'auto-refund', 'auto-cancel'
+  are common forbidden patterns — flag them when the prose lists them.
+- If unsure, lean toward ``violates: true``. False positives are
+  cheap (operator does it manually). False negatives are not.
+- Output JSON only. No prose, no markdown, no preamble."""
+
+
+def _judge_prose_violation(
+    *,
+    playbook: Playbook,
+    skill_name: str,
+    skill_input: dict[str, Any],
+    client,
+) -> tuple[bool, str | None]:
+    """Phase 16 Layer 3 — ask Anthropic whether the proposed write
+    violates any 'Must not automate' prose in the playbook.
+
+    Returns ``(violates, reason)``. Best-effort: a failed judge call
+    returns ``(False, None)`` so a transient API hiccup doesn't block
+    a legitimate action. The validator layer + HITL gate provide the
+    real safety net underneath.
+
+    Cost-conscious: only call this for autonomous writes on playbooks
+    that actually contain prose constraints. Skip otherwise.
+    """
+    # Cheap pre-check: only invoke the judge when the playbook body
+    # has language suggesting risk constraints. Saves the call when
+    # the prose has nothing relevant to say.
+    prose = playbook.body or ""
+    lower = prose.lower()
+    if not any(
+        marker in lower
+        for marker in ("must not automate", "do not automate", "safety constraint")
+    ):
+        return False, None
+
+    # Trim to the relevant section so we don't burn tokens on the full
+    # body (often 3-5KB). Grab from 'Risks' / 'Must not' markers down.
+    excerpt = prose
+    for marker in ("Risks", "Must not", "Safety"):
+        idx = excerpt.find(marker)
+        if idx >= 0:
+            excerpt = excerpt[idx : idx + 3000]
+            break
+
+    user_msg = (
+        f"# Playbook excerpt\n{excerpt}\n\n"
+        f"# Proposed action\n"
+        f"skill: {skill_name}\n"
+        f"params: {_compact(skill_input)}\n"
+    )
+
+    try:
+        resp = _create_with_retry(
+            client,
+            model=config.CLASSIFIER_MODEL,  # Haiku — cheap, fast
+            max_tokens=256,
+            system=_JUDGE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("prose judge failed: %s", exc)
+        return False, None
+
+    text = ""
+    for b in resp.content:
+        if getattr(b, "type", None) == "text":
+            text += getattr(b, "text", "")
+    text = text.strip()
+    # Tolerate stray ``` fences.
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    try:
+        data = json.loads(text)
+    except Exception:  # noqa: BLE001
+        log.warning("prose judge returned non-JSON: %r", text[:200])
+        return False, None
+    if data.get("violates"):
+        return True, str(data.get("reason") or "playbook prose violation")
+    return False, None
+
+
 def _content_block_to_dict(block) -> dict[str, Any]:
     btype = getattr(block, "type", None)
     if btype == "text":
@@ -627,6 +783,7 @@ def _content_block_to_dict(block) -> dict[str, Any]:
             "input": dict(getattr(block, "input", {}) or {}),
         }
     return {"type": btype or "unknown"}
+
 
 
 def _tool_result_from(tool_use_id: str, result) -> dict[str, Any]:

@@ -17,7 +17,7 @@ export function Layout() {
   return (
     <div className="h-screen flex bg-app font-sans text-sm text-ink-body antialiased">
       <Sidebar />
-      <div className="flex-1 pt-[13px] pr-2 pb-[38px] pl-0 min-w-0">
+      <div className="flex-1 pt-[13px] pr-2 pb-[13px] pl-0 min-w-0">
         <div className="h-full bg-card border border-line-strong rounded-xl overflow-hidden">
           <Outlet />
         </div>

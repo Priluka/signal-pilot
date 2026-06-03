@@ -107,6 +107,9 @@ function baseProps(
     onEditedTextChange: vi.fn(),
     onDraftApprove: vi.fn(),
     onDraftReject: vi.fn(),
+    // finishingUp added when Phase-2 of the agent rewrite landed; not
+    // exercised by these existing tests but required by the type.
+    finishingUp: false,
     ...overrides,
   };
 }
@@ -213,9 +216,11 @@ describe('AgentTimeline', () => {
     expect(screen.getByText('Planner started')).toBeInTheDocument();
     expect(screen.getByText('jira_add_public_comment')).toBeInTheDocument();
     expect(screen.getByText('Hello from agent')).toBeInTheDocument();
-    const approveBtn = screen.getByRole('button', { name: /approve & run/i });
+    const approveBtn = screen.getByRole('button', { name: /approve & continue/i });
     fireEvent.click(approveBtn);
-    expect(onApprove).toHaveBeenCalledWith('pa-1');
+    // The wrapper inside AgentTimeline forwards ``(id, editedInput)``;
+    // no edits in this test → ``editedInput`` is undefined.
+    expect(onApprove).toHaveBeenCalledWith('pa-1', undefined);
   });
 
   it('renders Agent finished after history + planner_status=done', () => {

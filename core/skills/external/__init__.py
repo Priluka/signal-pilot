@@ -13,6 +13,7 @@ from core.skills.external import (  # noqa: F401  — side-effect: register skil
     datatrans_lookup,
     graylog_search,
     parkis_lookup,
+    search_playbooks,
     skidata_lookup,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "datatrans_lookup",
     "graylog_search",
     "parkis_lookup",
+    "search_playbooks",
     "skidata_lookup",
 ]

@@ -442,6 +442,95 @@ export async function deleteChatSession(id: number): Promise<void> {
   if (!res.ok) throw new Error(`${res.status} delete /chat/sessions/${id}`);
 }
 
+
+// --- Multi-turn chat threads (Phase 4) -------------------------------------
+
+
+/** Create a brand-new empty thread. The backend auto-derives the
+ *  title from the first turn's user_text once it lands. Frontend calls
+ *  this when the operator clicks 'New chat' (or implicitly on the
+ *  first message when no thread is active). */
+export function createThread(
+  title?: string,
+): Promise<import('./types').ChatThread> {
+  return json<import('./types').ChatThread>('/chat/threads', {
+    method: 'POST',
+    body: JSON.stringify({ title: title ?? null }),
+  });
+}
+
+
+export function listThreads(): Promise<import('./types').ChatThreadSummary[]> {
+  return json<import('./types').ChatThreadSummary[]>('/chat/threads');
+}
+
+
+export function getThreadDetail(
+  id: number,
+): Promise<import('./types').ChatThreadDetail> {
+  return json<import('./types').ChatThreadDetail>(`/chat/threads/${id}`);
+}
+
+
+export async function deleteThread(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/chat/threads/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`${res.status} delete /chat/threads/${id}`);
+}
+
+
+/** Append a new turn to a thread and consume the SSE response.
+ *  Wire format mirrors the legacy /chat/agentic stream — same
+ *  ``sources / skill_executing / skill_executed / composing / delta /
+ *  done / error`` events, plus a new ``compacted`` event when the
+ *  multi-turn compaction layer kicks in. */
+export function streamThreadTurn(
+  thread_id: number,
+  user_text: string,
+  top_k: number,
+  handlers: ChatStreamHandlers,
+): AbortController {
+  return _consumeSSE(
+    `${API_BASE}/chat/threads/${thread_id}/turns`,
+    { method: 'POST', body: JSON.stringify({ user_text, top_k }) },
+    handlers,
+  );
+}
+
+
+/** Cancel an in-flight turn. Backend sets a cooperative flag; the
+ *  agent loop checks it at the next iteration boundary and exits
+ *  with ``status='error'`` + a specific error_message the UI keys on
+ *  to render "Stopped" instead of "Error". Latency up to one full
+ *  Anthropic round-trip (5-15s). Idempotent. */
+export async function interruptThreadTurn(
+  thread_id: number,
+  turn_id: number,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/chat/threads/${thread_id}/turns/${turn_id}/interrupt`,
+    { method: 'POST' },
+  );
+  if (!res.ok) {
+    throw new Error(`${res.status} interrupt turn ${turn_id}`);
+  }
+}
+
+
+/** Re-attach to a turn that's already mid-stream (refresh during
+ *  active generation). Replays whatever events have been persisted so
+ *  far, then continues live until ``done`` / ``error``. */
+export function attachToThreadTurn(
+  thread_id: number,
+  turn_id: number,
+  handlers: ChatStreamHandlers,
+): AbortController {
+  return _consumeSSE(
+    `${API_BASE}/chat/threads/${thread_id}/turns/${turn_id}/stream`,
+    { method: 'GET' },
+    handlers,
+  );
+}
+
 // --- Chat (SSE) ------------------------------------------------------------
 export interface ChatSkillExecutingEvent {
   skill: string;
@@ -462,6 +551,25 @@ export interface ChatSkillExecutedEvent {
 export interface ChatComposingEvent {
   // empty payload — just a signal that token stream is about to start
 }
+export interface ChatThinkingEvent {
+  /** 1-based iteration index. Reaches the operator BEFORE the
+   *  Anthropic stream returns its first byte for the iteration, so
+   *  the UI can show a heartbeat during the silent gap between a
+   *  tool_result and the next text/tool_use block. */
+  iteration: number;
+}
+export interface ChatThinkingTextEvent {
+  /** A chunk of the agent's extended-thinking channel. Streams just
+   *  like a text delta — append to the accumulated thinking buffer
+   *  for the current turn. */
+  text: string;
+}
+export interface ChatCompactedEvent {
+  tier: number;
+  before_tokens: number;
+  after_tokens: number;
+  dropped_turns: number;
+}
 export interface ChatStreamHandlers {
   onSources?: (e: ChatSourcesEvent) => void;
   onDelta?: (e: ChatDeltaEvent) => void;
@@ -473,6 +581,18 @@ export interface ChatStreamHandlers {
   onSkillExecuting?: (e: ChatSkillExecutingEvent) => void;
   onSkillExecuted?: (e: ChatSkillExecutedEvent) => void;
   onComposing?: (e: ChatComposingEvent) => void;
+  /** Heartbeat fired at the top of every agent iteration so the UI
+   *  has a continuous activity signal even when the next Anthropic
+   *  call takes several seconds to first byte. */
+  onThinking?: (e: ChatThinkingEvent) => void;
+  /** Phase 9B — extended-thinking delta. UI accumulates and renders
+   *  as a collapsible quote above the final answer. */
+  onThinkingText?: (e: ChatThinkingTextEvent) => void;
+  /** Fires whenever the multi-turn compaction layer trims the
+   *  context. Tier 1 = snip; Tier 2 = drop old turns; Tier 3 =
+   *  LLM summarisation. UI can surface a small badge so the
+   *  operator knows older context has been compressed. */
+  onCompacted?: (e: ChatCompactedEvent) => void;
 }
 
 /**
@@ -624,6 +744,15 @@ function dispatchEvent(raw: string, handlers: ChatStreamHandlers): void {
       break;
     case 'composing':
       handlers.onComposing?.(payload as ChatComposingEvent);
+      break;
+    case 'thinking':
+      handlers.onThinking?.(payload as ChatThinkingEvent);
+      break;
+    case 'thinking_text':
+      handlers.onThinkingText?.(payload as ChatThinkingTextEvent);
+      break;
+    case 'compacted':
+      handlers.onCompacted?.(payload as ChatCompactedEvent);
       break;
   }
 }

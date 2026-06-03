@@ -183,7 +183,7 @@ B2B partners (primarily Zagrebački holding / ZGParking) contact Bmove Support t
 Derived from 74 tickets in cluster `BS:b2b_partner|croatia|no_label:c3`. Direct quotes from 7 representative tickets:
 
 - `BS-53031` _[hr]_: "Molim da izvršite povrat sredstava za pogrešno kupljenu kartu. Karta je kod nas poništena."
-- `BS-51678` _[hr]_: "Erste storno i podatci Transaction code: zrcy1-98gdx-q95 Iznos: 11,90 EUR Parking artikl: TJEDNA KPK 2. ZONA Registracija: ZG**** IBAN: HR4725000093206392414, Marinko Mamić"
+- `BS-51678` _[hr]_: "Erste storno i podatci Transaction code: zrcy1-98gdx-q95 Iznos: 11,90 EUR Parking artikl: TJEDNA KPK 2. ZONA Registracija: ZG**** IBAN: HR47**********, Marinko Mamić"
 - `BS-22059` _[hr]_: "predmetna transakcija je stornirana te su sredstva vraćena na Aircash novčanik korisnika."
 - `BS-52376` _[hr]_: "Novac vraćen korisnici"
 - `BS-8459` _[hr]_: "korisnik je putem Aircash aplikacije 15.05.2023. u 09:57:18h kupio tjednu kartu za 1. zonu u Zagrebu, no dobio je kartu koja vrijedi za period 10.-17.07.2023."

@@ -41,6 +41,7 @@ def validate(
     tool_name: str,
     playbook_metadata: dict[str, Any],
     mode: str,
+    tool_input: dict[str, Any] | None = None,
 ) -> ValidationResult:
     """Validate a single Claude tool_use call against playbook + mode.
 
@@ -52,6 +53,11 @@ def validate(
         The matched playbook's YAML frontmatter dict (``pb.metadata``).
     mode
         ``"shadow"`` | ``"assisted"`` | ``"autonomous"``.
+    tool_input
+        The proposed parameters for the skill. Optional — needed only
+        for ``forbidden_actions.must_not_contain`` checks that inspect
+        params (e.g. comment body text). Callers that don't have the
+        params yet pass ``None`` and skip the content-level check.
     """
     # 1. Allow-list check ---------------------------------------------------
     allowed = playbook_metadata.get("allowed_skills") or []
@@ -79,6 +85,60 @@ def validate(
                 f"implemented yet"
             ),
         )
+
+    # 3. forbidden_actions — Layer 1 of the soft-enforcement fix.
+    # Playbook frontmatter can declare machine-readable hard blocks
+    # that override the allow-list. Two shapes are supported per
+    # skill, and they compose: the rule fires when EITHER matches.
+    #
+    #   * ``block_in: [assisted, autonomous]`` — hard reject in the
+    #     listed modes regardless of any other config. Use this for
+    #     skills that should NEVER auto-fire for this playbook
+    #     (e.g. ticket closure on a complaint playbook).
+    #   * ``must_not_contain: [str, ...]``    — reject only if any of
+    #     the listed substrings appears (case-insensitive) in the
+    #     body / comment / text params. Lets you keep a skill
+    #     generally available while blocking specific phrasings.
+    #
+    # The two rules are INDEPENDENT: if only ``must_not_contain`` is
+    # set, the skill is allowed by default and rejected only on
+    # content match. If only ``block_in`` is set, the skill is
+    # blocked unconditionally in those modes. If neither is set, the
+    # rule is a no-op (defensive — empty rules don't fire).
+    forbidden = playbook_metadata.get("forbidden_actions") or {}
+    if isinstance(forbidden, dict) and tool_name in forbidden:
+        rule = forbidden.get(tool_name) or {}
+        block_in = rule.get("block_in")
+        forbidden_strings = rule.get("must_not_contain") or []
+        # Unconditional block — only when ``block_in`` is explicitly
+        # set. Missing field means "no unconditional block".
+        if block_in and mode in block_in:
+            reason = rule.get("reason") or "playbook prose"
+            return ValidationResult(
+                ok=False,
+                reason=(
+                    f"forbidden_action: {tool_name!r} blocked by playbook "
+                    f"frontmatter ({reason})"
+                ),
+            )
+        # Content-level reject — only when params contain a forbidden
+        # phrase. Inspects string-valued fields that conventionally
+        # carry user-visible text.
+        if forbidden_strings and tool_input:
+            for field_name in ("body", "comment", "text", "message"):
+                value = tool_input.get(field_name)
+                if not isinstance(value, str):
+                    continue
+                lower = value.lower()
+                for needle in forbidden_strings:
+                    if str(needle).lower() in lower:
+                        return ValidationResult(
+                            ok=False,
+                            reason=(
+                                f"forbidden_action: {tool_name!r} body "
+                                f"contains forbidden phrase {needle!r}"
+                            ),
+                        )
 
     # 3. Approval policy ----------------------------------------------------
     # Read skills never require approval — they're side-effect-free.
